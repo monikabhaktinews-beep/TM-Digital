@@ -12,7 +12,7 @@ import {
   Shield, Key, Users, Coins, ArrowDownLeft, ArrowUpRight, BarChart2, 
   Settings, Clipboard, Sliders, CheckCircle2, XCircle, Search, Edit, 
   Plus, Trash2, Ban, Lock, Unlock, Eye, Send, ArrowRight, Wallet, Percent, 
-  Info, RefreshCw, MessageSquare 
+  Info, RefreshCw, MessageSquare, Gift, Download
 } from 'lucide-react';
 
 interface AdminPanelProps {
@@ -33,11 +33,16 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const [loginError, setLoginError] = useState('');
 
   // Active Admin Sub-tab
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'users' | 'requests' | 'tasks' | 'support' | 'settings'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'users' | 'referrals' | 'requests' | 'tasks' | 'support' | 'settings' | 'transfers'>('dashboard');
 
   // Search & Filter states
   const [userSearchQuery, setUserSearchQuery] = useState('');
   const [selectedUser, setSelectedUser] = useState<UserProfile | null>(null);
+
+  // Referral Management states
+  const [referralSearchQuery, setReferralSearchQuery] = useState('');
+  const [referralFilter, setReferralFilter] = useState<'all' | 'successful' | 'unsuccessful'>('all');
+  const [selectedReferral, setSelectedReferral] = useState<{ referrer: UserProfile; invitee: UserProfile } | null>(null);
 
   // Manual Adjustments Form
   const [adjustTM, setAdjustTM] = useState('');
@@ -227,10 +232,12 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
           {[
             { id: 'dashboard', label: 'Overview Metrics', icon: BarChart2 },
             { id: 'users', label: 'User Database', icon: Users },
+            { id: 'referrals', label: 'Referral Logs', icon: Gift },
+            { id: 'transfers', label: 'Transfer History', icon: RefreshCw },
             { id: 'requests', label: 'Requests & Submissions', icon: Clipboard, badge: pendingDeposits.length + pendingWithdrawals.length + pendingSubmissions.length },
             { id: 'tasks', label: 'Tasks & Channels', icon: Sliders },
             { id: 'support', label: 'Support Inbox', icon: MessageSquare, badge: db.tickets.filter(t => t.status === 'Open').length },
-            { id: 'settings', label: 'Staking Settings', icon: Settings }
+            { id: 'settings', label: 'System Settings', icon: Settings }
           ].map((item) => {
             const Icon = item.icon;
             const isActive = activeTab === item.id;
@@ -414,7 +421,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                     />
                     <div>
                       <h4 className="font-bold text-base text-white">{selectedUser.firstName} {selectedUser.lastName || ''}</h4>
-                      <span className="text-xs text-tg-blue-light block">@{selectedUser.username || 'NoUsername'}</span>
+                      <span className="text-xs text-tg-blue-light block">UID: <strong className="text-white font-extrabold">{selectedUser.uid}</strong> | @{selectedUser.username || 'NoUsername'}</span>
                     </div>
                   </div>
 
@@ -522,6 +529,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                       const q = userSearchQuery.toLowerCase();
                       return u.firstName.toLowerCase().includes(q) || 
                              u.id.includes(q) || 
+                             (u.uid && String(u.uid).includes(q)) ||
                              (u.username && u.username.toLowerCase().includes(q));
                     })
                     .map((user) => (
@@ -534,7 +542,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                           <img src={user.photoUrl} className="w-8 h-8 rounded-full border border-white/5 object-cover" alt="" referrerPolicy="no-referrer" />
                           <div>
                             <span className="font-semibold text-xs text-white block">{user.firstName} {user.lastName || ''}</span>
-                            <span className="text-[10px] text-tg-text-muted block">@{user.username || 'NoUsername'} (ID: {user.id})</span>
+                            <span className="text-[10px] text-tg-text-muted block">UID: <span className="text-white font-bold">{user.uid}</span> | @{user.username || 'NoUsername'} (ID: {user.id})</span>
                           </div>
                         </div>
 
@@ -558,6 +566,334 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
               )}
             </div>
           )}
+
+          {/* REFERRAL LOGS MANAGEMENT */}
+          {activeTab === 'referrals' && (() => {
+            // Find all referred users (where referredBy is set)
+            const allReferred = db.users.filter(u => u.referredBy);
+            
+            // Metrics
+            const totalReferralsCount = allReferred.length;
+            const successfulReferralsCount = allReferred.filter(u => u.referralCounted).length;
+            const failedReferralsCount = totalReferralsCount - successfulReferralsCount; // Incomplete / Pending
+            const totalTMDistributed = successfulReferralsCount * 100; // 100 TM per successful referral
+
+            // Filtering & Searching
+            const filtered = allReferred.filter(invitee => {
+              const referrer = db.users.find(u => u.id === invitee.referredBy);
+              
+              // Filter status
+              if (referralFilter === 'successful' && !invitee.referralCounted) return false;
+              if (referralFilter === 'unsuccessful' && invitee.referralCounted) return false;
+
+              // Search query
+              if (referralSearchQuery.trim()) {
+                const query = referralSearchQuery.toLowerCase();
+                const inviteeName = (invitee.firstName + ' ' + (invitee.lastName || '')).toLowerCase();
+                const inviteeUsername = (invitee.username || '').toLowerCase();
+                const inviteeId = invitee.id;
+                
+                const referrerName = referrer ? (referrer.firstName + ' ' + (referrer.lastName || '')).toLowerCase() : '';
+                const referrerUsername = referrer ? (referrer.username || '').toLowerCase() : '';
+                const referrerId = referrer ? referrer.id : '';
+
+                return (
+                  inviteeName.includes(query) ||
+                  inviteeUsername.includes(query) ||
+                  inviteeId.includes(query) ||
+                  referrerName.includes(query) ||
+                  referrerUsername.includes(query) ||
+                  referrerId.includes(query)
+                );
+              }
+              return true;
+            });
+
+            // Sort newest first
+            const sortedFiltered = [...filtered].sort(
+              (a, b) => new Date(b.registeredAt).getTime() - new Date(a.registeredAt).getTime()
+            );
+
+            // Export to CSV Function
+            const handleExportCSV = () => {
+              const headers = ['Invitee ID', 'Invitee Username', 'Invitee Name', 'Referrer ID', 'Referrer Username', 'Referrer Name', 'Registration Date', 'Status', 'Reward Distributed (TM)'];
+              const csvRows = [headers.join(',')];
+              
+              allReferred.forEach(invitee => {
+                const referrer = db.users.find(u => u.id === invitee.referredBy);
+                const status = invitee.referralCounted ? 'Successful' : 'Unsuccessful/Pending';
+                const reward = invitee.referralCounted ? 100 : 0;
+                const row = [
+                  invitee.id,
+                  invitee.username || '',
+                  `"${invitee.firstName.replace(/"/g, '""')}"`,
+                  referrer?.id || '',
+                  referrer?.username || '',
+                  referrer ? `"${referrer.firstName.replace(/"/g, '""')}"` : '',
+                  invitee.registeredAt || '',
+                  status,
+                  reward
+                ];
+                csvRows.push(row.join(','));
+              });
+              
+              const blob = new Blob([csvRows.join('\n')], { type: 'text/csv;charset=utf-8;' });
+              const url = URL.createObjectURL(blob);
+              const link = document.createElement('a');
+              link.setAttribute('href', url);
+              link.setAttribute('download', `TM_Digital_Referrals_Report_${new Date().toISOString().split('T')[0]}.csv`);
+              link.style.visibility = 'hidden';
+              document.body.appendChild(link);
+              link.click();
+              document.body.removeChild(link);
+            };
+
+            return (
+              <div className="space-y-4 animate-fadeIn">
+                {/* Metrics Cards */}
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                  <div className="glass-panel p-4 rounded-xl border border-white/5 bg-tg-surface/30">
+                    <span className="text-[9px] text-tg-text-muted uppercase tracking-wider font-bold block">Total Referrals</span>
+                    <span className="text-xl font-bold text-white font-mono">{totalReferralsCount}</span>
+                    <p className="text-[9px] text-tg-text-muted">Cumulative referred users</p>
+                  </div>
+                  
+                  <div className="glass-panel p-4 rounded-xl border border-white/5 bg-emerald-500/5">
+                    <span className="text-[9px] text-emerald-400 uppercase tracking-wider font-bold block">Successful Referrals</span>
+                    <span className="text-xl font-bold text-emerald-400 font-mono">{successfulReferralsCount}</span>
+                    <p className="text-[9px] text-tg-text-muted">Verified & tasks completed</p>
+                  </div>
+
+                  <div className="glass-panel p-4 rounded-xl border border-white/5 bg-red-500/5">
+                    <span className="text-[9px] text-red-400 uppercase tracking-wider font-bold block">Failed / Pending</span>
+                    <span className="text-xl font-bold text-red-400 font-mono">{failedReferralsCount}</span>
+                    <p className="text-[9px] text-tg-text-muted">Incomplete/pending tasks</p>
+                  </div>
+
+                  <div className="glass-panel p-4 rounded-xl border border-white/5 bg-tg-blue/5">
+                    <span className="text-[9px] text-tg-blue-light uppercase tracking-wider font-bold block">Total TM Distributed</span>
+                    <span className="text-xl font-bold text-tg-blue-light font-mono">{totalTMDistributed.toLocaleString()} TM</span>
+                    <p className="text-[9px] text-tg-text-muted">Earned referral rewards</p>
+                  </div>
+                </div>
+
+                {/* Filters, Search & Export Actions */}
+                <div className="glass-panel p-4 rounded-xl border border-white/5 flex flex-col md:flex-row md:items-center justify-between gap-3 bg-tg-surface/20">
+                  <div className="flex flex-1 flex-col sm:flex-row gap-2">
+                    {/* Search query */}
+                    <div className="relative flex-1">
+                      <Search className="absolute left-3 top-2.5 h-4 w-4 text-tg-text-muted" />
+                      <input
+                        type="text"
+                        placeholder="Search invitee or referrer username/ID..."
+                        value={referralSearchQuery}
+                        onChange={(e) => setReferralSearchQuery(e.target.value)}
+                        className="w-full bg-tg-dark/40 border border-white/5 rounded-xl pl-9 pr-4 py-2 text-xs text-white placeholder-tg-text-muted focus:outline-none focus:border-tg-blue/30"
+                      />
+                    </div>
+
+                    {/* Quick filter segmented selector */}
+                    <div className="flex items-center gap-1 bg-tg-dark/50 border border-white/5 rounded-xl p-0.5 self-start">
+                      {([
+                        { id: 'all', label: 'All' },
+                        { id: 'successful', label: 'Successful' },
+                        { id: 'unsuccessful', label: 'Incomplete' }
+                      ] as const).map((opt) => (
+                        <button
+                          key={opt.id}
+                          onClick={() => setReferralFilter(opt.id)}
+                          className={`px-3 py-1.5 text-[10px] font-bold rounded-lg transition capitalize cursor-pointer ${
+                            referralFilter === opt.id 
+                              ? 'bg-tg-blue text-white' 
+                              : 'text-tg-text-muted hover:text-white'
+                          }`}
+                        >
+                          {opt.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* CSV Export Button */}
+                  <button
+                    onClick={handleExportCSV}
+                    className="bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl py-2 px-3 text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer shrink-0"
+                  >
+                    <Download className="w-4 h-4" />
+                    <span>Export Logs (CSV)</span>
+                  </button>
+                </div>
+
+                {/* Referral List Table */}
+                <div className="glass-panel rounded-xl border border-white/5 overflow-hidden">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs text-left text-tg-text-muted">
+                      <thead className="text-[10px] uppercase font-bold text-tg-text-muted bg-tg-surface-light border-b border-white/5">
+                        <tr>
+                          <th className="px-4 py-3">Invitee (Joined User)</th>
+                          <th className="px-4 py-3">Referrer (Invited By)</th>
+                          <th className="px-4 py-3">Registration Date</th>
+                          <th className="px-4 py-3">Status</th>
+                          <th className="px-4 py-3">Reward</th>
+                          <th className="px-4 py-3 text-center">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-white/5">
+                        {sortedFiltered.length === 0 ? (
+                          <tr>
+                            <td colSpan={6} className="text-center py-8 text-tg-text-muted font-medium">
+                              No referral entries found matching filters.
+                            </td>
+                          </tr>
+                        ) : (
+                          sortedFiltered.map((invitee) => {
+                            const referrer = db.users.find(u => u.id === invitee.referredBy);
+                            return (
+                              <tr key={invitee.id} className="hover:bg-white/[0.01] transition duration-200">
+                                <td className="px-4 py-3">
+                                  <div className="flex items-center gap-2.5">
+                                    <img src={invitee.photoUrl} alt={invitee.firstName} className="w-7 h-7 rounded-full border border-white/5" referrerPolicy="no-referrer" />
+                                    <div>
+                                      <span className="font-bold text-white block">{invitee.firstName} {invitee.lastName || ''}</span>
+                                      <span className="text-[10px] text-tg-blue-light block font-mono">@{invitee.username || invitee.id}</span>
+                                    </div>
+                                  </div>
+                                </td>
+                                <td className="px-4 py-3">
+                                  {referrer ? (
+                                    <div className="flex items-center gap-2.5">
+                                      <img src={referrer.photoUrl} alt={referrer.firstName} className="w-7 h-7 rounded-full border border-white/5" referrerPolicy="no-referrer" />
+                                      <div>
+                                        <span className="font-bold text-white block">{referrer.firstName}</span>
+                                        <span className="text-[10px] text-tg-blue-light block font-mono">@{referrer.username || referrer.id}</span>
+                                      </div>
+                                    </div>
+                                  ) : (
+                                    <span className="text-red-400 font-bold font-mono">ID: {invitee.referredBy} (Deleted)</span>
+                                  )}
+                                </td>
+                                <td className="px-4 py-3 font-mono text-[10px]">
+                                  {new Date(invitee.registeredAt).toLocaleString()}
+                                </td>
+                                <td className="px-4 py-3">
+                                  {invitee.referralCounted ? (
+                                    <span className="bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[9px] px-2 py-0.5 rounded font-extrabold uppercase">
+                                      Successful
+                                    </span>
+                                  ) : (
+                                    <span className="bg-red-500/10 text-red-400 border border-red-500/20 text-[9px] px-2 py-0.5 rounded font-extrabold uppercase">
+                                      Incomplete
+                                    </span>
+                                  )}
+                                </td>
+                                <td className="px-4 py-3 font-bold text-white font-mono">
+                                  {invitee.referralCounted ? '100 TM' : '0 TM'}
+                                </td>
+                                <td className="px-4 py-3 text-center">
+                                  <button
+                                    onClick={() => setSelectedReferral({ referrer: referrer || invitee, invitee })}
+                                    className="bg-tg-blue hover:bg-tg-blue-light text-white rounded-lg px-2.5 py-1 text-[10px] font-bold transition cursor-pointer"
+                                  >
+                                    View Details
+                                  </button>
+                                </td>
+                              </tr>
+                            );
+                          })
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                {/* Referral Details Modal Overlay */}
+                {selectedReferral && (
+                  <div className="fixed inset-0 z-[110] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+                    <div className="w-full max-w-lg glass-panel p-6 rounded-2xl border border-white/10 space-y-5 bg-tg-surface text-tg-text">
+                      <div className="flex items-center justify-between border-b border-white/5 pb-3">
+                        <h4 className="font-bold text-white font-display text-base">Referral Connection Insights</h4>
+                        <button
+                          onClick={() => setSelectedReferral(null)}
+                          className="text-tg-text-muted hover:text-white transition text-xs font-bold"
+                        >
+                          ✕ Close
+                        </button>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
+                        {/* Invitee detailed card */}
+                        <div className="bg-tg-dark/40 border border-white/5 p-3 rounded-xl space-y-2">
+                          <span className="text-[10px] text-tg-text-muted uppercase tracking-wider font-extrabold block text-tg-blue-light">Invitee (Joined Friend)</span>
+                          <div className="flex items-center gap-2">
+                            <img src={selectedReferral.invitee.photoUrl} className="w-9 h-9 rounded-full" referrerPolicy="no-referrer" />
+                            <div>
+                              <span className="font-bold text-white block">{selectedReferral.invitee.firstName}</span>
+                              <span className="text-[10px] text-tg-text-muted block font-mono">@{selectedReferral.invitee.username || 'N/A'}</span>
+                            </div>
+                          </div>
+                          <div className="space-y-1 pt-1.5 border-t border-white/5 text-[10px] font-mono leading-relaxed text-tg-text-muted">
+                            <div>Telegram ID: <span className="text-white">{selectedReferral.invitee.id}</span></div>
+                            <div>Registration Date: <span className="text-white">{new Date(selectedReferral.invitee.registeredAt).toLocaleString()}</span></div>
+                            <div>Mandatory Done: <span className={selectedReferral.invitee.mandatoryCompleted ? 'text-emerald-400 font-bold' : 'text-red-400 font-bold'}>{selectedReferral.invitee.mandatoryCompleted ? 'YES' : 'NO'}</span></div>
+                          </div>
+                        </div>
+
+                        {/* Referrer detailed card */}
+                        <div className="bg-tg-dark/40 border border-white/5 p-3 rounded-xl space-y-2">
+                          <span className="text-[10px] text-tg-text-muted uppercase tracking-wider font-extrabold block text-amber-400">Referrer (Invited By)</span>
+                          <div className="flex items-center gap-2">
+                            <img src={selectedReferral.referrer.photoUrl} className="w-9 h-9 rounded-full" referrerPolicy="no-referrer" />
+                            <div>
+                              <span className="font-bold text-white block">{selectedReferral.referrer.firstName}</span>
+                              <span className="text-[10px] text-tg-text-muted block font-mono">@{selectedReferral.referrer.username || 'N/A'}</span>
+                            </div>
+                          </div>
+                          <div className="space-y-1 pt-1.5 border-t border-white/5 text-[10px] font-mono leading-relaxed text-tg-text-muted">
+                            <div>Telegram ID: <span className="text-white">{selectedReferral.referrer.id}</span></div>
+                            <div>Total Invited: <span className="text-white">{selectedReferral.referrer.referralCount || 0} users</span></div>
+                            <div>Staking Balance: <span className="text-white">{selectedReferral.referrer.balanceTM} TM</span></div>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="p-4 bg-tg-dark/60 rounded-xl border border-white/5 space-y-2.5 text-xs">
+                        <span className="text-[10px] text-tg-text-muted uppercase tracking-wider font-extrabold block">Referral Reward Audit Logs</span>
+                        <div className="flex items-center justify-between text-[11px]">
+                          <span className="text-tg-text-muted">Verification Status:</span>
+                          <span className={`font-bold font-mono px-2 py-0.5 rounded text-[10px] uppercase ${
+                            selectedReferral.invitee.referralCounted
+                              ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/10'
+                              : 'bg-red-500/10 text-red-400 border border-red-500/10 animate-pulse-slow'
+                          }`}>
+                            {selectedReferral.invitee.referralCounted ? '🟢 VERIFIED SUCCESSFUL' : '🔴 INCOMPLETE / PENDING'}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between text-[11px] pt-1 border-t border-white/5">
+                          <span className="text-tg-text-muted">USDT Credited:</span>
+                          <span className="font-bold font-mono text-white">$0.00 USDT</span>
+                        </div>
+                        <div className="flex items-center justify-between text-[11px] pt-1 border-t border-white/5">
+                          <span className="text-tg-text-muted">TM Distributed:</span>
+                          <span className={`font-bold font-mono ${selectedReferral.invitee.referralCounted ? 'text-emerald-400' : 'text-tg-text-muted'}`}>
+                            {selectedReferral.invitee.referralCounted ? '+100 TM' : '0 TM'}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="flex justify-end pt-1">
+                        <button
+                          onClick={() => setSelectedReferral(null)}
+                          className="w-full sm:w-auto bg-tg-blue hover:bg-tg-blue-light text-white text-xs font-bold py-2.5 px-6 rounded-xl transition cursor-pointer"
+                        >
+                          Acknowledge & Close
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
 
           {/* DEPOSITS & CLAIMS REQUESTS QUEUE */}
           {activeTab === 'requests' && (
@@ -1500,6 +1836,106 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
             </div>
           )}
 
+          {/* USER PEER-TO-PEER TRANSFERS TAB */}
+          {activeTab === 'transfers' && (
+            <div className="space-y-4 animate-fadeIn">
+              <div className="glass-panel p-5 rounded-2xl border border-white/5 space-y-2">
+                <h3 className="font-semibold text-base text-white font-display">Peer-to-Peer User Transfers</h3>
+                <p className="text-xs text-tg-text-muted">
+                  Monitor instant direct TM transfers executed between user accounts via UIDs.
+                </p>
+              </div>
+
+              {/* Transfer Metrics */}
+              {(() => {
+                const transfersList = db.transfers || [];
+                const totalTransfersCount = transfersList.length;
+                const totalTransfersAmount = transfersList
+                  .filter(t => t.status === 'Success')
+                  .reduce((sum, t) => sum + (t.amountTM !== undefined ? t.amountTM : (t.amountUSDT || 0)), 0);
+
+                return (
+                  <>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="glass-panel p-4 rounded-xl border border-white/5 bg-tg-surface/30">
+                        <span className="text-[10px] text-tg-text-muted uppercase tracking-wider font-bold block">Total Transfers Logs</span>
+                        <span className="text-xl font-bold text-white font-mono mt-1 block">{totalTransfersCount}</span>
+                      </div>
+                      <div className="glass-panel p-4 rounded-xl border border-white/5 bg-emerald-500/5">
+                        <span className="text-[10px] text-emerald-400 uppercase tracking-wider font-bold block">Total Transferred Volume</span>
+                        <span className="text-xl font-bold text-emerald-400 font-mono mt-1 block">{totalTransfersAmount.toLocaleString()} TM</span>
+                      </div>
+                    </div>
+
+                    {/* Transfers Table */}
+                    <div className="glass-panel rounded-xl border border-white/5 overflow-hidden">
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-xs text-left text-tg-text-muted">
+                          <thead className="text-[10px] uppercase font-bold text-tg-text-muted bg-tg-surface-light border-b border-white/5">
+                            <tr>
+                              <th className="px-4 py-3">Sender (From UID)</th>
+                              <th className="px-4 py-3">Receiver (To UID)</th>
+                              <th className="px-4 py-3">Amount</th>
+                              <th className="px-4 py-3">Date</th>
+                              <th className="px-4 py-3 text-center">Status</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-white/5">
+                            {transfersList.length === 0 ? (
+                              <tr>
+                                <td colSpan={5} className="text-center py-8 text-tg-text-muted font-medium">
+                                  No P2P transfer history found.
+                                </td>
+                              </tr>
+                            ) : (
+                              [...transfersList]
+                                .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+                                .map((t) => {
+                                  const senderUser = db.users.find(u => u.uid === t.senderUid);
+                                  const receiverUser = db.users.find(u => u.uid === t.receiverUid);
+                                  return (
+                                    <tr key={t.id} className="hover:bg-white/[0.01] transition duration-200">
+                                      <td className="px-4 py-3">
+                                        <div className="font-bold text-white">UID: {t.senderUid}</div>
+                                        <div className="text-[10px] text-tg-text-muted">
+                                          {senderUser ? senderUser.firstName : 'Unknown'}
+                                        </div>
+                                      </td>
+                                      <td className="px-4 py-3">
+                                        <div className="font-bold text-white">UID: {t.receiverUid}</div>
+                                        <div className="text-[10px] text-tg-text-muted">
+                                          {receiverUser ? receiverUser.firstName : 'Unknown'}
+                                        </div>
+                                      </td>
+                                      <td className="px-4 py-3 font-bold text-emerald-400 font-mono">
+                                        {(t.amountTM !== undefined ? t.amountTM : (t.amountUSDT || 0)).toLocaleString()} TM
+                                      </td>
+                                      <td className="px-4 py-3 font-mono text-[10px]">
+                                        {new Date(t.createdAt).toLocaleString()}
+                                      </td>
+                                      <td className="px-4 py-3 text-center">
+                                        <span className={`text-[9px] px-2 py-0.5 rounded font-extrabold uppercase ${
+                                          t.status === 'Success'
+                                            ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                                            : 'bg-red-500/10 text-red-400 border border-red-500/20'
+                                        }`}>
+                                          {t.status}
+                                        </span>
+                                      </td>
+                                    </tr>
+                                  );
+                                })
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </>
+                );
+              })()}
+            </div>
+          )}
+
           {/* STAKING & PAYMENTS SYSTEM SETTINGS */}
           {activeTab === 'settings' && (
             <div className="space-y-4 animate-fadeIn">
@@ -1658,6 +2094,120 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                         </div>
                       </div>
                     ))}
+                  </div>
+                </div>
+
+                {/* Withdrawal Control Settings Card */}
+                <div className="glass-panel p-5 rounded-2xl border border-white/5 space-y-4">
+                  <h3 className="font-semibold text-sm text-white font-display flex items-center gap-1.5 border-b border-white/5 pb-2">
+                    <Shield className="w-4 h-4 text-red-400" />
+                    <span>Withdrawal Processing Control</span>
+                  </h3>
+
+                  <div className="space-y-4 text-xs">
+                    <div className="flex items-center justify-between p-3 bg-tg-dark/30 rounded-xl border border-white/5">
+                      <div className="space-y-0.5">
+                        <span className="font-bold text-white text-xs block">Allow Withdrawals</span>
+                        <p className="text-[10px] text-tg-text-muted">
+                          If disabled, users will be blocked from submitting new withdrawal requests.
+                        </p>
+                      </div>
+                      
+                      <button
+                        type="button"
+                        onClick={() => setSettingsForm({ ...settingsForm, withdrawEnabled: !settingsForm.withdrawEnabled })}
+                        className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                          settingsForm.withdrawEnabled ? 'bg-tg-blue' : 'bg-tg-dark/90 border-white/10'
+                        }`}
+                      >
+                        <span
+                          className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                            settingsForm.withdrawEnabled ? 'translate-x-5' : 'translate-x-0'
+                          }`}
+                        />
+                      </button>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] text-tg-text-muted uppercase tracking-wider font-bold block">
+                        Withdrawals Disabled Message
+                      </label>
+                      <textarea
+                        rows={3}
+                        value={settingsForm.withdrawDisabledMessage || ''}
+                        onChange={(e) => setSettingsForm({ ...settingsForm, withdrawDisabledMessage: e.target.value })}
+                        placeholder="🚫 Withdrawals are temporarily unavailable. Please try again later."
+                        className="w-full bg-tg-dark/50 border border-white/5 focus:border-tg-blue/50 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none transition leading-relaxed font-semibold"
+                      />
+                      <p className="text-[9px] text-tg-text-muted">
+                        This custom message will be displayed to all users on the Withdraw page when withdrawals are disabled.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Referral Invite & Earn Controls Card */}
+                <div className="glass-panel p-5 rounded-2xl border border-white/5 space-y-4">
+                  <h3 className="font-semibold text-sm text-white font-display flex items-center gap-1.5 border-b border-white/5 pb-2">
+                    <Gift className="w-4 h-4 text-emerald-400" />
+                    <span>Referral System (Invite & Earn) Controls</span>
+                  </h3>
+
+                  <div className="space-y-4 text-xs">
+                    <div className="flex items-center justify-between p-3 bg-tg-dark/30 rounded-xl border border-white/5">
+                      <div className="space-y-0.5">
+                        <span className="font-bold text-white text-xs block">Enable Referral System</span>
+                        <p className="text-[10px] text-tg-text-muted">
+                          If disabled, users will not be rewarded for new successful referrals.
+                        </p>
+                      </div>
+                      
+                      <button
+                        type="button"
+                        onClick={() => setSettingsForm({ ...settingsForm, referralSystemEnabled: !settingsForm.referralSystemEnabled })}
+                        className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                          settingsForm.referralSystemEnabled !== false ? 'bg-tg-blue' : 'bg-tg-dark/90 border-white/10'
+                        }`}
+                      >
+                        <span
+                          className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                            settingsForm.referralSystemEnabled !== false ? 'translate-x-5' : 'translate-x-0'
+                          }`}
+                        />
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] text-tg-text-muted uppercase tracking-wider font-bold block">Tier 1 Reward ($ USD)</label>
+                        <input
+                          type="number"
+                          step="any"
+                          value={settingsForm.referralRewardAmountUSD ?? 3.0}
+                          onChange={(e) => setSettingsForm({ ...settingsForm, referralRewardAmountUSD: parseFloat(e.target.value) || 3.0 })}
+                          className="w-full bg-tg-dark/50 border border-white/5 rounded-xl px-3 py-2 text-xs text-white"
+                          required
+                        />
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] text-tg-text-muted uppercase tracking-wider font-bold block">Min Deposit Tier 1 ($ USD)</label>
+                        <input
+                          type="number"
+                          step="any"
+                          value={settingsForm.referralMinWithdrawRequirementUSD ?? 10.0}
+                          onChange={(e) => setSettingsForm({ ...settingsForm, referralMinWithdrawRequirementUSD: parseFloat(e.target.value) || 10.0 })}
+                          className="w-full bg-tg-dark/50 border border-white/5 rounded-xl px-3 py-2 text-xs text-white"
+                          required
+                        />
+                      </div>
+                    </div>
+
+                    <div className="p-3 bg-white/[0.02] rounded-xl border border-white/5 text-[10px] space-y-1 text-tg-text-muted">
+                      <span className="font-bold text-white uppercase tracking-wider block">Additional Configured Tiers (Fixed)</span>
+                      <div>• <strong className="text-white">Tier 2:</strong> Friend deposits <strong className="text-white">$50+</strong> cumulative → Referrer earns <strong className="text-emerald-400 font-mono">$10.00 USDT</strong></div>
+                      <div>• <strong className="text-white">Tier 3:</strong> Friend deposits <strong className="text-white">$100+</strong> cumulative → Referrer earns <strong className="text-emerald-400 font-mono">$15.00 USDT</strong></div>
+                    </div>
                   </div>
                 </div>
 

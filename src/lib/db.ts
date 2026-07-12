@@ -5,8 +5,8 @@ const STORAGE_KEY = 'tm_digital_database_v1';
 // Initial Mock Setup
 const DEFAULT_SETTINGS: SystemSettings = {
   conversionRate: 1000, // 1 USDT = 1000 TM
-  referralRewardUSDT: 0.03, // 0.03 USDT
-  referralRewardTM: 50, // 50 TM
+  referralRewardUSDT: 0.0, // 0.00 USDT (replaced with TM)
+  referralRewardTM: 100, // 100 TM Referral reward
   dailyBonusRateUSDT: 0.05, // 0.05 USDT per 1000 TM
   dailyBonusIntervalHours: 24,
   dailyBonusEnabled: true,
@@ -23,7 +23,12 @@ const DEFAULT_SETTINGS: SystemSettings = {
     { count: 25, rewardTM: 500 },
     { count: 50, rewardTM: 1200 },
     { count: 100, rewardTM: 2500 }
-  ]
+  ],
+  withdrawEnabled: true,
+  withdrawDisabledMessage: "🚫 Withdrawals are temporarily unavailable. Please try again later.",
+  referralSystemEnabled: true,
+  referralRewardAmountUSD: 3.0,
+  referralMinWithdrawRequirementUSD: 10.0
 };
 
 const DEFAULT_WITHDRAWAL_RULES: WithdrawalRule[] = [
@@ -138,6 +143,7 @@ const DEFAULT_CHANNELS: Channel[] = [
 
 const DEFAULT_USERS: UserProfile[] = [
   {
+    uid: 100001,
     id: "111111111",
     username: "cryptoking",
     firstName: "Sarah",
@@ -157,6 +163,7 @@ const DEFAULT_USERS: UserProfile[] = [
     isBanned: false
   },
   {
+    uid: 100002,
     id: "222222222",
     username: "tg_rich",
     firstName: "Michael",
@@ -176,6 +183,7 @@ const DEFAULT_USERS: UserProfile[] = [
     isBanned: false
   },
   {
+    uid: 100003,
     id: "333333333",
     username: "new_joiner",
     firstName: "Dwight",
@@ -195,6 +203,7 @@ const DEFAULT_USERS: UserProfile[] = [
     isBanned: false
   },
   {
+    uid: 100004,
     id: "444444444",
     username: "frozentg",
     firstName: "Jim",
@@ -214,6 +223,7 @@ const DEFAULT_USERS: UserProfile[] = [
     isBanned: false
   },
   {
+    uid: 100005,
     id: "555555555",
     username: "banned_user",
     firstName: "Pam",
@@ -421,6 +431,29 @@ export const getDB = (): AppDatabase => {
       if (!db.notifications) {
         db.notifications = [];
       }
+      if (!db.transfers) {
+        db.transfers = [];
+      }
+      
+      // Ensure every single user has a permanent unique numeric UID starting at 100001
+      let maxUid = 100000;
+      db.users.forEach((u: UserProfile) => {
+        if (u.uid && u.uid > maxUid) {
+          maxUid = u.uid;
+        }
+      });
+      let needsSave = false;
+      db.users.forEach((u: UserProfile) => {
+        if (!u.uid) {
+          maxUid += 1;
+          u.uid = maxUid;
+          needsSave = true;
+        }
+      });
+      if (needsSave) {
+        saveDB(db);
+      }
+      
       return db;
     } catch (e) {
       console.error("Failed to parse database from localStorage, resetting", e);
@@ -436,6 +469,7 @@ export const getDB = (): AppDatabase => {
     withdrawals: DEFAULT_WITHDRAWALS,
     withdrawalRules: DEFAULT_WITHDRAWAL_RULES,
     transactions: DEFAULT_TRANSACTIONS,
+    transfers: [],
     tickets: DEFAULT_TICKETS,
     settings: DEFAULT_SETTINGS,
     completedTasks: DEFAULT_COMPLETED_TASKS,
@@ -443,6 +477,14 @@ export const getDB = (): AppDatabase => {
     taskSubmissions: [],
     notifications: []
   };
+
+  // Generate initial UIDs for default users
+  let startUid = 100001;
+  db.users.forEach((u: UserProfile) => {
+    u.uid = startUid;
+    startUid += 1;
+  });
+
   saveDB(db);
   return db;
 };
@@ -521,8 +563,13 @@ export const getUserProfile = (tgUser: { id: string; username?: string; firstNam
   let user = db.users.find(u => u.id === tgUser.id);
   
   if (!user) {
+    // Generate permanent unique numeric UID starting at 100001
+    const maxUid = db.users.length > 0 ? Math.max(...db.users.map(u => u.uid || 0)) : 100000;
+    const nextUid = maxUid < 100000 ? 100001 : maxUid + 1;
+
     user = {
       id: tgUser.id,
+      uid: nextUid,
       username: tgUser.username,
       firstName: tgUser.firstName,
       lastName: tgUser.lastName,
@@ -543,15 +590,45 @@ export const getUserProfile = (tgUser: { id: string; username?: string; firstNam
       isBanned: false
     };
 
-    // If there is a referral parameter in Telegram start_param, store it temporarily!
-    // We check URL params for 'tgWebAppStartParam' (referral code)
+    // Robust referral parameter detection
     const urlParams = new URLSearchParams(window.location.search);
-    const startParam = urlParams.get('tgWebAppStartParam');
-    if (startParam && startParam !== tgUser.id) {
-      const referrer = db.users.find(u => u.id === startParam);
-      if (referrer && !referrer.isBanned && !referrer.isFrozen) {
-        user.referredBy = startParam;
-        user.referralCounted = false;
+    let startParam = urlParams.get('tgWebAppStartParam') || 
+                     urlParams.get('start_param') || 
+                     urlParams.get('ref') || 
+                     urlParams.get('startapp') || 
+                     urlParams.get('start');
+    
+    // Also try to find it in the hash just in case
+    if (!startParam && window.location.hash) {
+      try {
+        const hashParts = window.location.hash.split('?');
+        const hashQuery = hashParts[1] || (hashParts[0].includes('?') ? hashParts[0].split('?')[1] : '');
+        if (hashQuery) {
+          const hashParams = new URLSearchParams(hashQuery);
+          startParam = hashParams.get('tgWebAppStartParam') || 
+                       hashParams.get('start_param') || 
+                       hashParams.get('ref') || 
+                       hashParams.get('startapp') || 
+                       hashParams.get('start');
+        }
+      } catch (e) {}
+    }
+
+    if (startParam) {
+      // Strip 'ref_' prefix if present
+      let refId = startParam;
+      if (refId.startsWith('ref_')) {
+        refId = refId.substring(4);
+      }
+      
+      const refVal = refId.trim();
+      if (refVal && refVal !== tgUser.id) {
+        // Find referrer by either Telegram ID or numeric UID
+        const referrer = db.users.find(u => u.id === refVal || String(u.uid) === refVal);
+        if (referrer && referrer.id !== tgUser.id && !referrer.isBanned && !referrer.isFrozen) {
+          user.referredBy = referrer.id;
+          user.referralCounted = false;
+        }
       }
     }
 
@@ -934,6 +1011,14 @@ export const submitWithdrawal = (userId: string, amountUSDT: number, walletAddre
   const user = db.users.find(u => u.id === userId);
   
   if (!user) return { success: false, message: "User not found", db, user: null as any };
+  if (db.settings.withdrawEnabled === false) {
+    return {
+      success: false,
+      message: db.settings.withdrawDisabledMessage || "🚫 Withdrawals are temporarily unavailable. Please try again later.",
+      db,
+      user
+    };
+  }
   if (user.isBanned) return { success: false, message: "User account is banned", db, user };
   if (user.isFrozen) return { success: false, message: "User account is frozen", db, user };
   if (amountUSDT <= 0) return { success: false, message: "Amount must be greater than 0 USDT", db, user };
@@ -1069,6 +1154,73 @@ export const replyToTicket = (userId: string, ticketId: string, text: string): {
 // ADMIN ACTIONS
 // ==========================================
 
+export const checkAndProcessReferralDepositTiers = (user: UserProfile, db: AppDatabase) => {
+  // If referral system is disabled or user doesn't have a referrer, exit
+  if (db.settings.referralSystemEnabled === false || !user.referredBy) return;
+
+  // Find referrer
+  const referrer = db.users.find(u => u.id === user.referredBy || String(u.uid) === user.referredBy);
+  if (!referrer || referrer.id === user.id || referrer.isBanned || referrer.isFrozen) return;
+
+  // Initialize arrays if they don't exist
+  if (!user.claimedReferralTiers) {
+    user.claimedReferralTiers = [];
+  }
+
+  // Calculate user's total approved deposits
+  const totalApprovedDeposits = db.deposits
+    .filter(d => d.userId === user.id && d.status === 'Approved')
+    .reduce((sum, d) => sum + d.amountUSDT, 0);
+
+  // Define tiers
+  const tiers = [
+    { threshold: db.settings.referralMinWithdrawRequirementUSD ?? 10.0, reward: db.settings.referralRewardAmountUSD ?? 3.0 },
+    { threshold: 50.0, reward: 10.0 },
+    { threshold: 100.0, reward: 15.0 }
+  ];
+
+  tiers.forEach(tier => {
+    if (totalApprovedDeposits >= tier.threshold && !user.claimedReferralTiers!.includes(tier.threshold)) {
+      // Credit referrer
+      referrer.balanceUSDT += tier.reward;
+      referrer.referralEarningsUSDT = (referrer.referralEarningsUSDT || 0) + tier.reward;
+      referrer.lifetimeEarningsUSDT = (referrer.lifetimeEarningsUSDT || 0) + tier.reward;
+      
+      // If this is the first tier, increment referralCount and set referralCounted
+      if (tier.threshold === (db.settings.referralMinWithdrawRequirementUSD ?? 10.0)) {
+        referrer.referralCount += 1;
+        user.referralCounted = true;
+      }
+
+      // Mark tier as claimed for this referred user
+      user.claimedReferralTiers!.push(tier.threshold);
+
+      // Add transaction log for the referrer
+      db.transactions.push({
+        id: `ref_tier_reward_${tier.threshold}_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+        userId: referrer.id,
+        type: 'Referral',
+        amountTM: 0,
+        amountUSDT: tier.reward,
+        description: `Referral Reward ($${tier.reward}) for inviting ${user.firstName} (@${user.username || user.id}) - Tier $${tier.threshold}+ Deposit unlocked`,
+        createdAt: new Date().toISOString()
+      });
+
+      // Dispatch Notification for referrer
+      if (!db.notifications) db.notifications = [];
+      db.notifications.unshift({
+        id: `notif_${Date.now()}_ref_tier_${tier.threshold}`,
+        userId: referrer.id,
+        title: `Referral Milestone Unlocked! 🎁`,
+        message: `Your invitee ${user.firstName} deposited a cumulative $${totalApprovedDeposits} USDT (Unlocked Tier $${tier.threshold}+). You have been credited with a $${tier.reward} USDT reward!`,
+        type: 'referral_completed',
+        createdAt: new Date().toISOString(),
+        read: false
+      });
+    }
+  });
+};
+
 // Approve Deposit
 export const adminApproveDeposit = (depositId: string): AppDatabase => {
   const db = getDB();
@@ -1108,6 +1260,9 @@ export const adminApproveDeposit = (depositId: string): AppDatabase => {
     createdAt: new Date().toISOString(),
     read: false
   });
+  
+  // Check and process referral deposit tier rewards
+  checkAndProcessReferralDepositTiers(user, db);
   
   saveDB(db);
   return db;
@@ -1383,10 +1538,142 @@ export const completeUserOnboarding = (userId: string): { success: boolean; db: 
   
   user.mandatoryCompleted = true;
   
-  // Check and process referral gating EXACTLY when onboarding completes and the user accesses the dashboard!
-  checkAndProcessReferral(userId, db);
-  
   saveDB(db);
   return { success: true, db, user };
+};
+
+// Process referral on dashboard open
+export const processReferralOnDashboardOpen = (userId: string): { success: boolean; db: AppDatabase; user?: UserProfile } => {
+  const db = getDB();
+  const user = db.users.find(u => u.id === userId);
+  if (!user || !user.referredBy || user.referralCounted) return { success: false, db };
+  
+  if (user.mandatoryCompleted) {
+    checkAndProcessReferral(userId, db);
+    saveDB(db);
+    const updatedUser = db.users.find(u => u.id === userId);
+    return { success: true, db, user: updatedUser };
+  }
+  return { success: false, db };
+};
+
+// User-to-User Transfer using UID
+export const lookupRecipientByUid = (uid: number): { success: boolean; name?: string; uid?: number; message?: string } => {
+  const db = getDB();
+  const user = db.users.find(u => u.uid === uid);
+  if (!user) {
+    return { success: false, message: 'Invalid UID. Recipient not found.' };
+  }
+  return { 
+    success: true, 
+    name: `${user.firstName} ${user.lastName || ''}`.trim(), 
+    uid: user.uid 
+  };
+};
+
+export const executeUserTransfer = (
+  senderId: string, 
+  receiverUid: number, 
+  amount: number
+): { success: boolean; message: string; db?: AppDatabase } => {
+  const db = getDB();
+  const sender = db.users.find(u => u.id === senderId);
+  if (!sender) {
+    return { success: false, message: 'Sender profile not found.' };
+  }
+  
+  if (sender.isBanned || sender.isFrozen) {
+    return { success: false, message: 'Your account is currently banned or frozen.' };
+  }
+  
+  if (isNaN(amount) || amount <= 0) {
+    return { success: false, message: 'Transfer amount must be greater than zero.' };
+  }
+  
+  if (sender.uid === receiverUid) {
+    return { success: false, message: 'You cannot send funds to your own UID.' };
+  }
+  
+  const receiver = db.users.find(u => u.uid === receiverUid);
+  if (!receiver) {
+    return { success: false, message: 'Invalid UID. Recipient not found.' };
+  }
+  
+  if (receiver.isBanned || receiver.isFrozen) {
+    return { success: false, message: 'Recipient account is banned or frozen.' };
+  }
+  
+  if (sender.balanceTM < amount) {
+    return { success: false, message: `Insufficient TM balance. You only have ${sender.balanceTM.toLocaleString()} TM.` };
+  }
+  
+  // Deduct from sender and credit receiver
+  sender.balanceTM = parseFloat((sender.balanceTM - amount).toFixed(2));
+  receiver.balanceTM = parseFloat((receiver.balanceTM + amount).toFixed(2));
+  
+  // Log transfer record in the db
+  if (!db.transfers) {
+    db.transfers = [];
+  }
+  
+  const transferRecord = {
+    id: `transfer_${Date.now()}`,
+    senderUid: sender.uid,
+    receiverUid: receiver.uid,
+    amountTM: amount,
+    createdAt: new Date().toISOString(),
+    status: 'Success' as const
+  };
+  db.transfers.push(transferRecord);
+  
+  // Add Transaction logs for sender
+  db.transactions.push({
+    id: `tx_sent_${Date.now()}`,
+    userId: sender.id,
+    type: 'TransferSent',
+    amountTM: -amount,
+    amountUSDT: 0,
+    description: `Transferred ${amount.toLocaleString()} TM to UID ${receiver.uid} (${receiver.firstName})`,
+    createdAt: new Date().toISOString()
+  });
+  
+  // Add Transaction logs for receiver
+  db.transactions.push({
+    id: `tx_recv_${Date.now()}`,
+    userId: receiver.id,
+    type: 'TransferReceived',
+    amountTM: amount,
+    amountUSDT: 0,
+    description: `Received ${amount.toLocaleString()} TM from UID ${sender.uid} (${sender.firstName})`,
+    createdAt: new Date().toISOString()
+  });
+  
+  // Dispatch Notifications
+  if (!db.notifications) {
+    db.notifications = [];
+  }
+  
+  db.notifications.unshift({
+    id: `notif_sent_${Date.now()}`,
+    userId: sender.id,
+    title: 'Transfer Sent! 📤',
+    message: `You successfully transferred ${amount.toLocaleString()} TM to UID ${receiver.uid} (${receiver.firstName}).`,
+    type: 'task_completed',
+    createdAt: new Date().toISOString(),
+    read: false
+  });
+  
+  db.notifications.unshift({
+    id: `notif_recv_${Date.now()}`,
+    userId: receiver.id,
+    title: 'TM Received! 📥',
+    message: `You received ${amount.toLocaleString()} TM from UID ${sender.uid} (${sender.firstName}).`,
+    type: 'deposit_approved',
+    createdAt: new Date().toISOString(),
+    read: false
+  });
+  
+  saveDB(db);
+  return { success: true, message: `Successfully transferred ${amount.toLocaleString()} TM to ${receiver.firstName} (UID: ${receiver.uid}).`, db };
 };
 

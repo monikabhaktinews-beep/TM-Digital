@@ -155,54 +155,65 @@ export const WithdrawTab: React.FC<WithdrawTabProps> = ({
           <p className="text-[10px] text-tg-text-muted">Requests are processed manually within 1-12 hours.</p>
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="space-y-1.5">
-            <label className="text-[10px] text-tg-text-muted uppercase tracking-wider font-bold block">USDT Withdrawal Amount</label>
-            <input
-              type="number"
-              step="any"
-              placeholder="0.00"
-              value={amount}
-              onChange={(e) => setAmount(e.target.value)}
-              className="w-full bg-tg-dark/50 border border-white/5 focus:border-tg-blue/50 rounded-xl px-3.5 py-2.5 text-sm text-white focus:outline-none transition font-mono font-bold"
-              required
-            />
-          </div>
-
-          <div className="space-y-1.5">
-            <label className="text-[10px] text-tg-text-muted uppercase tracking-wider font-bold block">Your Receiving USDT Wallet Address (BEP20 Only)</label>
-            <input
-              type="text"
-              placeholder="Enter your USDT BEP20 Wallet Address"
-              value={walletAddress}
-              onChange={(e) => setWalletAddress(e.target.value)}
-              className="w-full bg-tg-dark/50 border border-white/5 focus:border-tg-blue/50 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none transition font-mono font-bold"
-              required
-            />
-          </div>
-
-          {errorMsg && (
-            <div className="bg-red-950/40 border border-red-500/30 text-red-300 p-2.5 rounded-lg text-xs font-semibold flex items-start gap-1.5">
-              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-              <span>{errorMsg}</span>
+        {db.settings.withdrawEnabled === false ? (
+          <div className="bg-red-500/10 border border-red-500/25 rounded-2xl p-4 text-center space-y-2.5 animate-pulse-slow">
+            <div className="w-10 h-10 bg-red-500/10 text-red-400 rounded-full flex items-center justify-center mx-auto border border-red-500/20">
+              <ShieldAlert className="w-5 h-5" />
             </div>
-          )}
-
-          {successMsg && (
-            <div className="bg-emerald-950/40 border border-emerald-500/30 text-emerald-300 p-2.5 rounded-lg text-xs font-semibold flex items-start gap-1.5">
-              <CheckCircle className="w-4 h-4 shrink-0 mt-0.5" />
-              <span>{successMsg}</span>
+            <div className="text-xs font-semibold text-red-300 leading-relaxed whitespace-pre-line">
+              {db.settings.withdrawDisabledMessage || "🚫 Withdrawals are temporarily unavailable.\nPlease try again later."}
             </div>
-          )}
+          </div>
+        ) : (
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div className="space-y-1.5">
+              <label className="text-[10px] text-tg-text-muted uppercase tracking-wider font-bold block">USDT Withdrawal Amount</label>
+              <input
+                type="number"
+                step="any"
+                placeholder="0.00"
+                value={amount}
+                onChange={(e) => setAmount(e.target.value)}
+                className="w-full bg-tg-dark/50 border border-white/5 focus:border-tg-blue/50 rounded-xl px-3.5 py-2.5 text-sm text-white focus:outline-none transition font-mono font-bold"
+                required
+              />
+            </div>
 
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full bg-tg-blue hover:bg-tg-blue-light text-white font-semibold font-display text-xs py-3 rounded-xl transition cursor-pointer flex items-center justify-center gap-1.5"
-          >
-            {loading ? 'Processing...' : 'Submit Withdrawal Request'}
-          </button>
-        </form>
+            <div className="space-y-1.5">
+              <label className="text-[10px] text-tg-text-muted uppercase tracking-wider font-bold block">Your Receiving USDT Wallet Address (BEP20 Only)</label>
+              <input
+                type="text"
+                placeholder="Enter your USDT BEP20 Wallet Address"
+                value={walletAddress}
+                onChange={(e) => setWalletAddress(e.target.value)}
+                className="w-full bg-tg-dark/50 border border-white/5 focus:border-tg-blue/50 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none transition font-mono font-bold"
+                required
+              />
+            </div>
+
+            {errorMsg && (
+              <div className="bg-red-950/40 border border-red-500/30 text-red-300 p-2.5 rounded-lg text-xs font-semibold flex items-start gap-1.5">
+                <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                <span>{errorMsg}</span>
+              </div>
+            )}
+
+            {successMsg && (
+              <div className="bg-emerald-950/40 border border-emerald-500/30 text-emerald-300 p-2.5 rounded-lg text-xs font-semibold flex items-start gap-1.5">
+                <CheckCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                <span>{successMsg}</span>
+              </div>
+            )}
+
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full bg-tg-blue hover:bg-tg-blue-light text-white font-semibold font-display text-xs py-3 rounded-xl transition cursor-pointer flex items-center justify-center gap-1.5"
+            >
+              {loading ? 'Processing...' : 'Submit Withdrawal Request'}
+            </button>
+          </form>
+        )}
       </div>
 
       {/* History */}

@@ -3,17 +3,16 @@ import { TelegramUser, UserProfile, AppDatabase } from './types';
 import { getDB, getUserProfile, saveDB } from './lib/db';
 import TelegramSimulator, { SIMULATED_PROFILES } from './components/TelegramSimulator';
 import TasksTab from './components/TasksTab';
-import DashboardTab from './components/DashboardTab';
 import DepositTab from './components/DepositTab';
 import WithdrawTab from './components/WithdrawTab';
-import ProfileTab from './components/ProfileTab';
-import LeaderboardTab from './components/LeaderboardTab';
+import { ProfileTab } from './components/ProfileTab';
+import { ReferralTab } from './components/ReferralTab';
 import SupportTab from './components/SupportTab';
 import AdminPanel from './components/AdminPanel';
 import { MandatoryTasksPopup } from './components/MandatoryTasksPopup';
 import { NotificationCenter } from './components/NotificationCenter';
 import { 
-  CheckSquare, BarChart2, ArrowDownLeft, ArrowUpRight, User, HelpCircle, Trophy,
+  CheckSquare, ArrowDownLeft, ArrowUpRight, User, HelpCircle, Gift,
   Lock, KeyRound, AlertTriangle, MessageSquare, Bot, Bell, Shield, Info, CheckCircle2, AlertCircle, RefreshCw
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -22,7 +21,7 @@ export default function App() {
   const [db, setDb] = useState<AppDatabase>(() => getDB());
   const [activeUser, setActiveUser] = useState<TelegramUser>(SIMULATED_PROFILES[0]);
   const [userProfile, setUserProfile] = useState<UserProfile>(() => getUserProfile(SIMULATED_PROFILES[0]));
-  const [activeTab, setActiveTab] = useState<string>('tasks');
+  const [activeTab, setActiveTab] = useState<string>('profile');
   const [isAdminView, setIsAdminView] = useState<boolean>(false);
   const [showLockedModal, setShowLockedModal] = useState<boolean>(false);
   const [blockedTab, setBlockedTab] = useState<string>('');
@@ -72,8 +71,8 @@ export default function App() {
     const profile = getUserProfile(newTgUser);
     setUserProfile(profile);
     
-    // Automatically reset tab to tasks if switching users
-    setActiveTab('tasks');
+    // Automatically reset tab to profile if switching users
+    setActiveTab('profile');
   };
 
   const handleStateUpdate = (updatedProfile: UserProfile, updatedDb: AppDatabase) => {
@@ -227,13 +226,12 @@ export default function App() {
                 showToast={showToast}
               />
             )}
-            
-            {activeTab === 'dashboard' && (
-              <DashboardTab 
+
+            {activeTab === 'profile' && (
+              <ProfileTab 
                 user={userProfile} 
                 db={db} 
                 onUpdateState={handleStateUpdate} 
-                onNavigateToTab={navigateToTab} 
                 showToast={showToast}
               />
             )}
@@ -258,17 +256,8 @@ export default function App() {
               />
             )}
 
-            {activeTab === 'profile' && (
-              <ProfileTab 
-                user={userProfile} 
-                db={db} 
-                onUpdateState={handleStateUpdate} 
-                showToast={showToast}
-              />
-            )}
-
-            {activeTab === 'leaderboard' && (
-              <LeaderboardTab 
+            {activeTab === 'referral' && (
+              <ReferralTab 
                 user={userProfile} 
                 db={db} 
                 onUpdateState={handleStateUpdate} 
@@ -361,12 +350,11 @@ export default function App() {
       {/* Sticky Native Telegram-like Bottom Navigation Bar */}
       <nav className="fixed bottom-4 inset-x-4 glass-panel border border-white/10 py-2 px-1 z-40 max-w-md mx-auto flex justify-around items-center rounded-2xl shadow-2xl shadow-black/70 bg-tg-surface/90 backdrop-blur-xl">
         {[
+          { id: 'profile', label: 'Profile', icon: User, lockable: true },
           { id: 'tasks', label: 'Tasks', icon: CheckSquare },
-          { id: 'dashboard', label: 'Staking', icon: BarChart2, lockable: true },
           { id: 'deposit', label: 'Deposit', icon: ArrowDownLeft, lockable: true },
           { id: 'withdraw', label: 'Withdraw', icon: ArrowUpRight, lockable: true },
-          { id: 'profile', label: 'Referral', icon: User, lockable: true },
-          { id: 'leaderboard', label: 'Leaderboard', icon: Trophy, lockable: true },
+          { id: 'referral', label: 'Invite', icon: Gift, lockable: true },
           { id: 'support', label: 'Support', icon: HelpCircle, lockable: true }
         ].map((tab) => {
           const Icon = tab.icon;
@@ -457,7 +445,7 @@ export default function App() {
         )}
       </AnimatePresence>
 
-      {/* Full-screen mandatory tasks popup blocker */}
+       {/* Full-screen mandatory tasks popup blocker */}
       <AnimatePresence>
         {!userProfile.mandatoryCompleted && mandatoryTasks.length > 0 && (
           <MandatoryTasksPopup
@@ -465,7 +453,7 @@ export default function App() {
             db={db}
             onUpdateState={handleStateUpdate}
             onClose={() => {
-              // Already saved and updated via handleStateUpdate inside MandatoryTasksPopup
+              setActiveTab('profile');
             }}
             showToast={showToast}
           />

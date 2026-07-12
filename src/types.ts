@@ -8,6 +8,8 @@ export interface TelegramUser {
 }
 
 export interface UserProfile extends TelegramUser {
+  uid: number; // Permanent unique numeric UID starting at 100001
+  email?: string; // Optional email
   registeredAt: string;
   balanceTM: number;
   balanceUSDT: number;
@@ -18,9 +20,10 @@ export interface UserProfile extends TelegramUser {
   depositStatus: 'None' | 'Pending' | 'Approved';
   withdrawStatus: 'None' | 'Pending' | 'Approved';
   referralCount: number;
-  referredBy?: string; // User ID of who referred this user
-  referralCounted?: boolean; // Referral converted after completing mandatory tasks
+  referredBy?: string; // User ID or UID of who referred this user
+  referralCounted?: boolean; // Referral converted after completing mandatory tasks or first withdrawal
   claimedMilestones?: number[]; // List of referral milestones already rewarded (e.g. [5, 10])
+  claimedReferralTiers?: number[]; // List of deposit referral tiers already rewarded to referrer (e.g. [10, 50, 100])
   isFrozen: boolean;
   isBanned: boolean;
   mandatoryCompleted?: boolean; // User has seen and completed mandatory tasks
@@ -138,6 +141,15 @@ export interface TaskSubmission {
   processedAt?: string;
 }
 
+export interface UserTransfer {
+  id: string;
+  senderUid: number;
+  receiverUid: number;
+  amountTM: number;
+  createdAt: string;
+  status: 'Success' | 'Failed';
+}
+
 export interface SystemSettings {
   conversionRate: number; // 1 USDT = X TM
   referralRewardUSDT: number; // 0.03 USDT
@@ -153,6 +165,11 @@ export interface SystemSettings {
   mandatoryTaskCount: number; // Minimum mandatory tasks required for referral activation
   depositMinUSDT: number; // Minimum deposit in USDT
   referralMilestones: { count: number; rewardTM: number }[]; // Referral milestones
+  withdrawEnabled?: boolean; // Admin ON/OFF Toggle
+  withdrawDisabledMessage?: string; // Message shown when withdrawals are off
+  referralSystemEnabled: boolean; // Enable/Disable referral system
+  referralRewardAmountUSD: number; // Reward for successful referral (e.g. $3)
+  referralMinWithdrawRequirementUSD: number; // Minimum withdrawal of friend to trigger reward (e.g. $10)
 }
 
 export interface AppDatabase {
@@ -163,6 +180,7 @@ export interface AppDatabase {
   withdrawals: WithdrawalRequest[];
   withdrawalRules: WithdrawalRule[];
   transactions: Transaction[];
+  transfers?: UserTransfer[]; // User-to-User transfer history
   tickets: SupportTicket[];
   settings: SystemSettings;
   completedTasks: { [userId: string]: string[] }; // userId -> taskId[]
