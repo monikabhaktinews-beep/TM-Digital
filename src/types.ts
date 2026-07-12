@@ -154,7 +154,7 @@ export interface SystemSettings {
   conversionRate: number; // 1 USDT = X TM
   referralRewardUSDT: number; // 0.03 USDT
   referralRewardTM: number; // Reward in TM (e.g. 50 TM)
-  dailyBonusRateUSDT: number; // 0.05 USDT per 1000 TM
+  dailyBonusRateUSDT: number; // 0.11 USDT per 1000 TM
   dailyBonusIntervalHours: number; // 24 hours
   dailyBonusEnabled: boolean;
   walletAddressUSDT: string;
@@ -187,6 +187,7 @@ export interface AppDatabase {
   claimedBonuses: { [userId: string]: string }; // userId -> lastClaimedIsoString
   taskSubmissions: TaskSubmission[];
   notifications?: UserNotification[]; // Persisted notification center alert logs
+  lastInterestPayout?: string; // ISO string of last automatic interest settlement
 }
 
 declare global {

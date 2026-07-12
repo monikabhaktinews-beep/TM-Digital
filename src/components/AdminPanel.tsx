@@ -1977,7 +1977,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                         type="number"
                         step="any"
                         value={settingsForm.dailyBonusRateUSDT}
-                        onChange={(e) => setSettingsForm({ ...settingsForm, dailyBonusRateUSDT: parseFloat(e.target.value) || 0.05 })}
+                        onChange={(e) => setSettingsForm({ ...settingsForm, dailyBonusRateUSDT: parseFloat(e.target.value) || 0.11 })}
                         className="w-full bg-tg-dark/50 border border-white/5 rounded-xl px-3 py-2 text-xs text-white"
                         required
                       />

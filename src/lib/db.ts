@@ -7,7 +7,7 @@ const DEFAULT_SETTINGS: SystemSettings = {
   conversionRate: 1000, // 1 USDT = 1000 TM
   referralRewardUSDT: 0.0, // 0.00 USDT (replaced with TM)
   referralRewardTM: 100, // 100 TM Referral reward
-  dailyBonusRateUSDT: 0.05, // 0.05 USDT per 1000 TM
+  dailyBonusRateUSDT: 0.11, // 0.11 USDT per 1000 TM
   dailyBonusIntervalHours: 24,
   dailyBonusEnabled: true,
   walletAddressUSDT: "0x2FD17882dB69E7eA50E463dBaD37dCD3C2C0d592", // BEP20 BSC Address
@@ -417,6 +417,73 @@ const DEFAULT_CLAIMED_BONUSES: { [userId: string]: string } = {
   "111111111": "2026-07-10T12:00:00Z", // Claimed yesterday, can claim again soon
 };
 
+export const processAutomaticInterestPayout = (db: AppDatabase) => {
+  const now = new Date();
+  
+  if (!db.lastInterestPayout) {
+    db.lastInterestPayout = now.toISOString();
+    saveDB(db);
+    return;
+  }
+
+  const lastPayoutDate = new Date(db.lastInterestPayout);
+  
+  // Calculate local "12:01 AM" targets that have occurred between lastPayoutDate and now
+  let currentTarget = new Date(lastPayoutDate.getTime());
+  currentTarget.setHours(0, 1, 0, 0); // set to 12:01 AM of that day
+  
+  // If lastPayoutDate was already after 12:01 AM of its day, our first target is the next day's 12:01 AM
+  if (lastPayoutDate.getTime() >= currentTarget.getTime()) {
+    currentTarget.setDate(currentTarget.getDate() + 1);
+    currentTarget.setHours(0, 1, 0, 0);
+  }
+
+  let payoutsHappened = 0;
+  
+  // Distribute interest for each 12:01 AM milestone that has passed
+  while (currentTarget.getTime() <= now.getTime()) {
+    const payoutDateIso = currentTarget.toISOString();
+    
+    // Distribute to all users in the DB
+    db.users.forEach(user => {
+      // Per 100 TM = 0.011$ Per Day
+      if (user.balanceTM >= 100 && !user.isBanned && !user.isFrozen) {
+        // Calculate interest: (balanceTM / 100) * 0.011 USDT
+        // Using db.settings.dailyBonusRateUSDT (0.11), rate per 100 TM is db.settings.dailyBonusRateUSDT / 10 = 0.011 USDT.
+        const ratePer100 = db.settings.dailyBonusRateUSDT / 10;
+        const interestUSDT = Number(((user.balanceTM / 100) * ratePer100).toFixed(4));
+        
+        if (interestUSDT > 0) {
+          user.balanceUSDT = Number((user.balanceUSDT + interestUSDT).toFixed(4));
+          user.lifetimeEarningsUSDT = Number((user.lifetimeEarningsUSDT + interestUSDT).toFixed(4));
+          user.todayBonusUSDT = interestUSDT; // Store latest bonus
+          
+          // Log automatic interest transaction
+          db.transactions.push({
+            id: `interest_auto_${user.id}_${currentTarget.getTime()}`,
+            userId: user.id,
+            type: 'DailyBonus',
+            amountTM: 0,
+            amountUSDT: interestUSDT,
+            description: `Automatic 12:01 AM Staking Interest (${user.balanceTM.toLocaleString()} TM holding)`,
+            createdAt: payoutDateIso
+          });
+        }
+      }
+    });
+
+    payoutsHappened++;
+    // Advance to next day's 12:01 AM
+    currentTarget.setDate(currentTarget.getDate() + 1);
+    currentTarget.setHours(0, 1, 0, 0);
+  }
+
+  if (payoutsHappened > 0) {
+    db.lastInterestPayout = now.toISOString();
+    saveDB(db);
+  }
+};
+
 export const getDB = (): AppDatabase => {
   const data = localStorage.getItem(STORAGE_KEY);
   if (data) {
@@ -438,6 +505,11 @@ export const getDB = (): AppDatabase => {
       // Ensure every single user has a permanent unique numeric UID starting at 117301
       let maxUid = 117300;
       let needsSave = false;
+
+      if (db.settings.dailyBonusRateUSDT === 0.05) {
+        db.settings.dailyBonusRateUSDT = 0.11;
+        needsSave = true;
+      }
       db.users.forEach((u: UserProfile) => {
         // Migration: If user's UID is old (less than 117301), shift it to start from 117301
         if (u.uid && u.uid < 117301) {
@@ -455,6 +527,10 @@ export const getDB = (): AppDatabase => {
           needsSave = true;
         }
       });
+      
+      // Process automatic daily interest payout at 12:01 AM
+      processAutomaticInterestPayout(db);
+
       if (needsSave) {
         saveDB(db);
       }
@@ -480,7 +556,8 @@ export const getDB = (): AppDatabase => {
     completedTasks: DEFAULT_COMPLETED_TASKS,
     claimedBonuses: DEFAULT_CLAIMED_BONUSES,
     taskSubmissions: [],
-    notifications: []
+    notifications: [],
+    lastInterestPayout: new Date().toISOString() // Initialize to now so first payout starts from tomorrow
   };
 
   // Generate initial UIDs for default users
@@ -903,7 +980,7 @@ export const claimDailyBonus = (userId: string): { success: boolean; message: st
   if (user.isFrozen) return { success: false, message: "User account is frozen", db, user };
   if (!db.settings.dailyBonusEnabled) return { success: false, message: "Daily bonus is currently disabled", db, user };
   
-  // Staking bonus rule: Every 1000 TM earns 0.05 USDT every 24 hours. (Formula: (balanceTM / 1000) * bonusRate)
+  // Staking bonus rule: Every 1000 TM earns 0.11 USDT every 24 hours. (Formula: (balanceTM / 1000) * bonusRate)
   if (user.balanceTM < 1000) {
     return { success: false, message: "You need at least 1,000 TM balance to claim Daily Bonus.", db, user };
   }
@@ -927,7 +1004,7 @@ export const claimDailyBonus = (userId: string): { success: boolean; message: st
     }
   }
   
-  // Calculate bonus: 0.05 USDT per 1000 TM
+  // Calculate bonus: 0.11 USDT per 1000 TM
   const thousandsOfTM = Math.floor(user.balanceTM / 1000);
   const bonusUSDT = Number((thousandsOfTM * db.settings.dailyBonusRateUSDT).toFixed(4));
   

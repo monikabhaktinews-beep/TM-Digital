@@ -49,13 +49,17 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({
   useEffect(() => {
     const updateCountdown = () => {
       const now = new Date();
-      const nextUtcMidnight = new Date(Date.UTC(
-        now.getUTCFullYear(),
-        now.getUTCMonth(),
-        now.getUTCDate() + 1,
-        0, 0, 0
-      ));
-      const diffMs = nextUtcMidnight.getTime() - now.getTime();
+      // Next local 12:01 AM (midnight + 1 minute)
+      const next1201 = new Date(
+        now.getFullYear(),
+        now.getMonth(),
+        now.getDate(),
+        0, 1, 0, 0
+      );
+      if (next1201.getTime() <= now.getTime()) {
+        next1201.setDate(next1201.getDate() + 1);
+      }
+      const diffMs = next1201.getTime() - now.getTime();
       
       const hours = Math.floor(diffMs / (1000 * 60 * 60));
       const minutes = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
@@ -194,10 +198,10 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({
 
   // Staking plans / Tiers mapping
   const getReturnPercent = (balanceTM: number) => {
-    if (balanceTM >= 3000000) return 7.0;
-    if (balanceTM >= 300000) return 6.5;
-    if (balanceTM >= 20000) return 6.0;
-    return 5.5;
+    if (balanceTM >= 3000000) return 14.0;
+    if (balanceTM >= 300000) return 13.0;
+    if (balanceTM >= 20000) return 12.0;
+    return 11.0;
   };
 
   const dailyReturnPercent = getReturnPercent(user.balanceTM);
@@ -480,7 +484,7 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({
                 </div>
                 <div className="text-right">
                   <span className="font-bold text-white block">1,000 TM</span>
-                  <span className="text-[9px] text-tg-text-muted block">Yield: 5.5% Daily ($ USDT)</span>
+                  <span className="text-[9px] text-tg-text-muted block">Yield: 11.0% Daily ($ USDT)</span>
                 </div>
               </div>
             </div>
@@ -492,7 +496,7 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({
                 return (
                   <div key={deposit.id} className="p-3.5 bg-white/5 border border-white/5 rounded-xl flex items-center justify-between text-xs">
                     <div>
-                      <span className="font-bold text-white block">Mining Pool Tier {tierPercent === 5.5 ? '1' : tierPercent === 6.0 ? '2' : tierPercent === 6.5 ? '3' : '4'}</span>
+                      <span className="font-bold text-white block">Mining Pool Tier {tierPercent === 11.0 ? '1' : tierPercent === 12.0 ? '2' : tierPercent === 13.0 ? '3' : '4'}</span>
                       <span className="text-[9px] text-emerald-400 font-semibold block mt-0.5">Approved & Active</span>
                     </div>
                     <div className="text-right">
