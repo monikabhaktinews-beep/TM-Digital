@@ -152,7 +152,6 @@ export const WithdrawTab: React.FC<WithdrawTabProps> = ({
       <div className="glass-panel p-5 rounded-2xl border border-white/5 space-y-4">
         <div>
           <h4 className="font-semibold text-sm text-white font-display">Request Instant Withdrawal</h4>
-          <p className="text-[10px] text-tg-text-muted">Requests are processed manually within 1-12 hours.</p>
         </div>
 
         {db.settings.withdrawEnabled === false ? (

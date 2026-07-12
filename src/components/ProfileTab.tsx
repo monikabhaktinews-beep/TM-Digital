@@ -316,7 +316,7 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({
               {totalTMEarned.toLocaleString()} <span className="text-xs font-extrabold text-slate-500 uppercase tracking-wider">TM</span>
             </div>
             <p className="text-[10px] text-slate-400 font-semibold pt-0.5">
-              ≈ ${(totalTMEarned / conversionRate).toFixed(3)} USDT
+              ≈ ${(user.balanceUSDT || 0).toFixed(3)} USDT
             </p>
           </div>
 
@@ -442,7 +442,7 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({
               <span>Weekend Special</span>
             </span>
             <h3 className="font-extrabold text-white text-sm mt-2 max-w-[190px] leading-snug">
-              Earn up to <span className="text-amber-400">30% ROI</span> in just 48 hours
+              Earn up to <span className="text-amber-400">5.5% ROI</span> in just 10 Days
             </h3>
             <p className="text-[9px] text-tg-text-muted mt-1">Staking starts automatically on deposit</p>
           </div>
