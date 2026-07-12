@@ -1,4 +1,4 @@
-import { AppDatabase, UserProfile, Task, Channel, DepositRequest, WithdrawalRequest, WithdrawalRule, Transaction, SupportTicket, SystemSettings } from '../types';
+import { AppDatabase, UserProfile, Task, Channel, DepositRequest, WithdrawalRequest, WithdrawalRule, Transaction, SupportTicket, SystemSettings, TaskSubmission } from '../types';
 
 const STORAGE_KEY = 'tm_digital_database_v1';
 
@@ -6,37 +6,33 @@ const STORAGE_KEY = 'tm_digital_database_v1';
 const DEFAULT_SETTINGS: SystemSettings = {
   conversionRate: 1000, // 1 USDT = 1000 TM
   referralRewardUSDT: 0.03, // 0.03 USDT
+  referralRewardTM: 50, // 50 TM
   dailyBonusRateUSDT: 0.05, // 0.05 USDT per 1000 TM
   dailyBonusIntervalHours: 24,
   dailyBonusEnabled: true,
-  walletAddressUSDT: "TR7NHqJeE4ntYHg8Bbu96TJvsB5bK6a9j4",
-  qrCodeUrl: "https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=TR7NHqJeE4ntYHg8Bbu96TJvsB5bK6a9j4",
+  walletAddressUSDT: "0x2FD17882dB69E7eA50E463dBaD37dCD3C2C0d592", // BEP20 BSC Address
+  qrCodeUrl: "https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=0x2FD17882dB69E7eA50E463dBaD37dCD3C2C0d592",
   autoApprovalEnabled: false,
   maintenanceMode: false,
-  announcement: "📢 TM Digital v1.2 Live! Complete your mandatory tasks to unlock your premium staking dashboard."
+  announcement: "📢 TM Digital v1.2 Live! Complete your mandatory tasks to unlock your premium staking dashboard.",
+  mandatoryTaskCount: 3,
+  depositMinUSDT: 1.0,
+  referralMilestones: [
+    { count: 5, rewardTM: 80 },
+    { count: 10, rewardTM: 200 },
+    { count: 25, rewardTM: 500 },
+    { count: 50, rewardTM: 1200 },
+    { count: 100, rewardTM: 2500 }
+  ]
 };
 
 const DEFAULT_WITHDRAWAL_RULES: WithdrawalRule[] = [
   {
     id: "rule_1",
     minAmountUSDT: 0.1,
-    maxAmountUSDT: 1.0,
+    maxAmountUSDT: 1000000.0,
     requiredLifetimeDepositUSDT: 1.0,
-    description: "Rule 1 (0.1 - 1.0 USDT): Requires minimum $1.00 lifetime approved deposits."
-  },
-  {
-    id: "rule_2",
-    minAmountUSDT: 1.0,
-    maxAmountUSDT: 3.0,
-    requiredLifetimeDepositUSDT: 2.0,
-    description: "Rule 2 (1.0 - 3.0 USDT): Requires minimum $2.00 lifetime approved deposits."
-  },
-  {
-    id: "rule_3",
-    minAmountUSDT: 3.0,
-    maxAmountUSDT: 10.0,
-    requiredLifetimeDepositUSDT: 5.0,
-    description: "Rule 3 (3.0 - 10.0 USDT): Requires minimum $5.00 lifetime approved deposits."
+    description: "Security Check (Anti-Fake Multi-Account Prevention): Requires a one-time minimum $1.00 approved deposit on BEP20 (BSC Network). Once verified, you unlock unlimited withdrawals for lifetime."
   }
 ];
 
@@ -415,7 +411,17 @@ export const getDB = (): AppDatabase => {
   const data = localStorage.getItem(STORAGE_KEY);
   if (data) {
     try {
-      return JSON.parse(data);
+      const db = JSON.parse(data);
+      // Ensure all settings fields exist on loaded DB
+      db.settings = { ...DEFAULT_SETTINGS, ...db.settings };
+      db.withdrawalRules = DEFAULT_WITHDRAWAL_RULES;
+      if (!db.taskSubmissions) {
+        db.taskSubmissions = [];
+      }
+      if (!db.notifications) {
+        db.notifications = [];
+      }
+      return db;
     } catch (e) {
       console.error("Failed to parse database from localStorage, resetting", e);
     }
@@ -433,7 +439,9 @@ export const getDB = (): AppDatabase => {
     tickets: DEFAULT_TICKETS,
     settings: DEFAULT_SETTINGS,
     completedTasks: DEFAULT_COMPLETED_TASKS,
-    claimedBonuses: DEFAULT_CLAIMED_BONUSES
+    claimedBonuses: DEFAULT_CLAIMED_BONUSES,
+    taskSubmissions: [],
+    notifications: []
   };
   saveDB(db);
   return db;
@@ -446,6 +454,65 @@ export const saveDB = (db: AppDatabase) => {
 export const resetDB = () => {
   localStorage.removeItem(STORAGE_KEY);
   return getDB();
+};
+
+// Notification Helpers
+export const addNotification = (
+  userId: string,
+  title: string,
+  message: string,
+  type: 'deposit_approved' | 'withdraw_approved' | 'daily_claimed' | 'referral_completed' | 'milestone_unlocked' | 'task_completed'
+) => {
+  const db = getDB();
+  if (!db.notifications) {
+    db.notifications = [];
+  }
+  db.notifications.unshift({
+    id: `notif_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+    userId,
+    title,
+    message,
+    type,
+    createdAt: new Date().toISOString(),
+    read: false
+  });
+  saveDB(db);
+};
+
+export const markNotificationsAsRead = (userId: string): AppDatabase => {
+  const db = getDB();
+  if (db.notifications) {
+    db.notifications.forEach(n => {
+      if (n.userId === userId) {
+        n.read = true;
+      }
+    });
+  }
+  saveDB(db);
+  return db;
+};
+
+export const resetUserMandatoryTasks = (userId: string): AppDatabase => {
+  const db = getDB();
+  const user = db.users.find(u => u.id === userId);
+  if (user) {
+    user.mandatoryCompleted = false;
+    
+    // Clear completed mandatory task IDs
+    const enabledTasks = db.tasks.filter(t => t.isEnabled);
+    const mandatoryTaskIds = enabledTasks.filter(t => t.isMandatory).map(t => t.id);
+    
+    if (db.completedTasks[userId]) {
+      db.completedTasks[userId] = db.completedTasks[userId].filter(id => !mandatoryTaskIds.includes(id));
+    }
+    
+    // Remove submissions for mandatory tasks
+    if (db.taskSubmissions) {
+      db.taskSubmissions = db.taskSubmissions.filter(s => !(s.userId === userId && mandatoryTaskIds.includes(s.taskId)));
+    }
+  }
+  saveDB(db);
+  return db;
 };
 
 // State Modifiers
@@ -470,11 +537,13 @@ export const getUserProfile = (tgUser: { id: string; username?: string; firstNam
       depositStatus: 'None',
       withdrawStatus: 'None',
       referralCount: 0,
+      referralCounted: false,
+      claimedMilestones: [],
       isFrozen: false,
       isBanned: false
     };
 
-    // If there is a referral parameter in Telegram start_param, reward the referrer!
+    // If there is a referral parameter in Telegram start_param, store it temporarily!
     // We check URL params for 'tgWebAppStartParam' (referral code)
     const urlParams = new URLSearchParams(window.location.search);
     const startParam = urlParams.get('tgWebAppStartParam');
@@ -482,24 +551,7 @@ export const getUserProfile = (tgUser: { id: string; username?: string; firstNam
       const referrer = db.users.find(u => u.id === startParam);
       if (referrer && !referrer.isBanned && !referrer.isFrozen) {
         user.referredBy = startParam;
-        
-        // Reward referrer with configured referral amount
-        const referralReward = db.settings.referralRewardUSDT;
-        referrer.balanceUSDT = Number((referrer.balanceUSDT + referralReward).toFixed(4));
-        referrer.lifetimeEarningsUSDT = Number((referrer.lifetimeEarningsUSDT + referralReward).toFixed(4));
-        referrer.referralEarningsUSDT = Number((referrer.referralEarningsUSDT + referralReward).toFixed(4));
-        referrer.referralCount += 1;
-
-        // Log referral transaction for referrer
-        db.transactions.push({
-          id: `ref_tx_${Date.now()}`,
-          userId: referrer.id,
-          type: 'Referral',
-          amountTM: 0,
-          amountUSDT: referralReward,
-          description: `Referral Reward for inviting ${tgUser.firstName} (@${tgUser.username || tgUser.id})`,
-          createdAt: new Date().toISOString()
-        });
+        user.referralCounted = false;
       }
     }
 
@@ -516,6 +568,86 @@ export const getUserProfile = (tgUser: { id: string; username?: string; firstNam
   }
   
   return user;
+};
+
+// Gating referral rewards behind completed mandatory tasks count
+export const checkAndProcessReferral = (userId: string, db: AppDatabase) => {
+  const user = db.users.find(u => u.id === userId);
+  if (!user || !user.referredBy || user.referralCounted) return;
+
+  const completedTaskIds = db.completedTasks[userId] || [];
+  const enabledTasks = db.tasks.filter(t => t.isEnabled);
+  const mandatoryTasks = enabledTasks.filter(t => t.isMandatory);
+  const completedMandatoryCount = mandatoryTasks.filter(t => completedTaskIds.includes(t.id)).length;
+
+  const reqCount = db.settings.mandatoryTaskCount ?? 3;
+  if (completedMandatoryCount >= reqCount) {
+    user.referralCounted = true;
+    const referrer = db.users.find(u => u.id === user.referredBy);
+    if (referrer && !referrer.isBanned && !referrer.isFrozen) {
+      const referralRewardTM = db.settings.referralRewardTM ?? 50;
+      referrer.balanceTM += referralRewardTM;
+      referrer.referralEarningsTM = (referrer.referralEarningsTM || 0) + referralRewardTM;
+      referrer.referralCount += 1;
+
+      // Log referral transaction for referrer
+      db.transactions.push({
+        id: `ref_tx_${Date.now()}`,
+        userId: referrer.id,
+        type: 'Referral',
+        amountTM: referralRewardTM,
+        amountUSDT: 0,
+        description: `Referral Reward for inviting ${user.firstName} (@${user.username || user.id}) after completing mandatory tasks`,
+        createdAt: new Date().toISOString()
+      });
+
+      // Dispatch Referral notification to the referrer
+      if (!db.notifications) db.notifications = [];
+      db.notifications.unshift({
+        id: `notif_${Date.now()}_ref`,
+        userId: referrer.id,
+        title: 'Referral Completed! 👥',
+        message: `Your invitee ${user.firstName} verified all mandatory tasks. You received +${referralRewardTM} TM!`,
+        type: 'referral_completed',
+        createdAt: new Date().toISOString(),
+        read: false
+      });
+
+      // Milestone rewards check
+      if (!referrer.claimedMilestones) {
+        referrer.claimedMilestones = [];
+      }
+      const milestones = db.settings.referralMilestones || [];
+      for (const milestone of milestones) {
+        if (referrer.referralCount >= milestone.count && !referrer.claimedMilestones.includes(milestone.count)) {
+          referrer.balanceTM += milestone.rewardTM;
+          referrer.claimedMilestones.push(milestone.count);
+
+          // Log milestone reward
+          db.transactions.push({
+            id: `tx_milestone_${milestone.count}_${Date.now()}`,
+            userId: referrer.id,
+            type: 'Reward',
+            amountTM: milestone.rewardTM,
+            amountUSDT: 0,
+            description: `Referral Milestone Reward: Reached ${milestone.count} Referrals!`,
+            createdAt: new Date().toISOString()
+          });
+
+          // Dispatch Milestone notification to the referrer
+          db.notifications.unshift({
+            id: `notif_${Date.now()}_ms_${milestone.count}`,
+            userId: referrer.id,
+            title: 'Milestone Unlocked! 🏆',
+            message: `Reached ${milestone.count} total referrals! You earned a milestone bonus of +${milestone.rewardTM} TM!`,
+            type: 'milestone_unlocked',
+            createdAt: new Date().toISOString(),
+            read: false
+          });
+        }
+      }
+    }
+  }
 };
 
 // Complete a task
@@ -544,8 +676,7 @@ export const completeUserTask = (userId: string, taskId: string): { success: boo
   const rewardUSDT = rewardTM / db.settings.conversionRate;
   
   user.balanceTM += rewardTM;
-  // Update lifetime earnings & user fields
-  user.lifetimeEarningsUSDT = Number((user.lifetimeEarningsUSDT + rewardUSDT).toFixed(4));
+  // NOTE: Lifetime earnings must NOT include task rewards (only staking counts)!
   
   // Log transaction
   db.transactions.push({
@@ -557,9 +688,127 @@ export const completeUserTask = (userId: string, taskId: string): { success: boo
     description: `Task completed: ${task.title}`,
     createdAt: new Date().toISOString()
   });
+
+  // Dispatch Notification
+  if (!db.notifications) db.notifications = [];
+  db.notifications.unshift({
+    id: `notif_${Date.now()}_task_${taskId}`,
+    userId: userId,
+    title: 'Task Completed! ✅',
+    message: `You completed "${task.title}" and earned +${rewardTM} TM!`,
+    type: 'task_completed',
+    createdAt: new Date().toISOString(),
+    read: false
+  });
   
   saveDB(db);
   return { success: true, message: `Completed task and earned ${rewardTM} TM!`, db, user };
+};
+
+// Submit a task for verification
+export const submitUserTask = (
+  userId: string, 
+  taskId: string, 
+  screenshotUrl?: string, 
+  confirmationCode?: string
+): { success: boolean; message: string; db: AppDatabase; user: UserProfile } => {
+  const db = getDB();
+  const user = db.users.find(u => u.id === userId);
+  const task = db.tasks.find(t => t.id === taskId);
+  
+  if (!user) return { success: false, message: "User not found", db, user: null as any };
+  if (user.isBanned) return { success: false, message: "User account is banned", db, user };
+  if (user.isFrozen) return { success: false, message: "User account is frozen", db, user };
+  if (!task) return { success: false, message: "Task not found", db, user };
+
+  if (!db.taskSubmissions) {
+    db.taskSubmissions = [];
+  }
+
+  // Check if they already have an approved or pending submission for this task
+  const existing = db.taskSubmissions.find(s => s.userId === userId && s.taskId === taskId);
+  if (existing) {
+    if (existing.status === 'Approved') {
+      return { success: false, message: "You have already completed this task and it has been approved.", db, user };
+    }
+    if (existing.status === 'Pending') {
+      return { success: false, message: "Your submission for this task is already pending verification.", db, user };
+    }
+  }
+
+  // Remove any older rejected submissions for this task/user
+  db.taskSubmissions = db.taskSubmissions.filter(s => !(s.userId === userId && s.taskId === taskId && s.status === 'Rejected'));
+
+  const submission: TaskSubmission = {
+    id: `task_sub_${Date.now()}`,
+    userId,
+    userUsername: user.username,
+    userFirstName: user.firstName,
+    taskId,
+    taskTitle: task.title,
+    taskRewardTM: task.rewardTM,
+    screenshotUrl,
+    confirmationCode,
+    status: 'Pending',
+    createdAt: new Date().toISOString()
+  };
+
+  db.taskSubmissions.push(submission);
+  saveDB(db);
+
+  return { success: true, message: "Task submission received and is pending admin verification!", db, user };
+};
+
+// Process a task submission (Approve / Reject)
+export const processTaskSubmission = (submissionId: string, status: 'Approved' | 'Rejected'): { success: boolean; message: string; db: AppDatabase } => {
+  const db = getDB();
+  if (!db.taskSubmissions) {
+    db.taskSubmissions = [];
+  }
+  const submission = db.taskSubmissions.find(s => s.id === submissionId);
+  if (!submission) {
+    return { success: false, message: "Submission not found", db };
+  }
+
+  if (submission.status !== 'Pending') {
+    return { success: false, message: `Submission is already ${submission.status}`, db };
+  }
+
+  submission.status = status;
+  submission.processedAt = new Date().toISOString();
+
+  if (status === 'Approved') {
+    // Complete the task and award the rewards
+    const user = db.users.find(u => u.id === submission.userId);
+    const task = db.tasks.find(t => t.id === submission.taskId);
+    if (user && task) {
+      if (!db.completedTasks[submission.userId]) {
+        db.completedTasks[submission.userId] = [];
+      }
+      if (!db.completedTasks[submission.userId].includes(submission.taskId)) {
+        db.completedTasks[submission.userId].push(submission.taskId);
+        
+        // Reward user
+        const rewardTM = task.rewardTM;
+        const rewardUSDT = rewardTM / db.settings.conversionRate;
+        user.balanceTM += rewardTM;
+
+        // Log transaction
+        db.transactions.push({
+          id: `tx_task_${Date.now()}`,
+          userId: user.id,
+          type: 'Reward',
+          amountTM: rewardTM,
+          amountUSDT: rewardUSDT,
+          description: `Task verified & completed: ${task.title}`,
+          createdAt: new Date().toISOString()
+        });
+      }
+    }
+  }
+
+  saveDB(db);
+  return { success: true, message: `Task submission ${status.toLowerCase()} successfully!`, db };
 };
 
 // Check-in / Claim Daily Bonus
@@ -615,6 +864,18 @@ export const claimDailyBonus = (userId: string): { success: boolean; message: st
     description: `Claimed Daily Staking Bonus for holding ${user.balanceTM} TM`,
     createdAt: now.toISOString()
   });
+
+  // Dispatch notification
+  if (!db.notifications) db.notifications = [];
+  db.notifications.unshift({
+    id: `notif_${Date.now()}_daily_${userId}`,
+    userId: userId,
+    title: 'Daily Bonus Claimed! 🌟',
+    message: `Claimed +${bonusUSDT} USDT bonus for holding ${user.balanceTM.toLocaleString()} TM!`,
+    type: 'daily_claimed',
+    createdAt: now.toISOString(),
+    read: false
+  });
   
   saveDB(db);
   return { success: true, message: `Successfully claimed daily bonus of ${bonusUSDT} USDT!`, db, user };
@@ -628,7 +889,11 @@ export const submitDeposit = (userId: string, amountUSDT: number, txid: string, 
   if (!user) return { success: false, message: "User not found", db, user: null as any };
   if (user.isBanned) return { success: false, message: "User account is banned", db, user };
   if (user.isFrozen) return { success: false, message: "User account is frozen", db, user };
-  if (amountUSDT <= 0) return { success: false, message: "Amount must be greater than 0 USDT", db, user };
+  
+  const minDeposit = db.settings.depositMinUSDT ?? 1.0;
+  if (amountUSDT < minDeposit) {
+    return { success: false, message: `Minimum deposit amount is ${minDeposit} USDT`, db, user };
+  }
   if (!txid.trim()) return { success: false, message: "TXID is required", db, user };
   
   // Check if TXID already exists to prevent duplicate submissions
@@ -831,6 +1096,18 @@ export const adminApproveDeposit = (depositId: string): AppDatabase => {
     description: `Approved deposit of ${deposit.amountUSDT} USDT. Credited ${earnedTM} TM.`,
     createdAt: new Date().toISOString()
   });
+
+  // Dispatch Notification
+  if (!db.notifications) db.notifications = [];
+  db.notifications.unshift({
+    id: `notif_${Date.now()}_dep_appr`,
+    userId: user.id,
+    title: 'Deposit Approved! 💰',
+    message: `Your deposit of ${deposit.amountUSDT} USDT was approved! Credited +${earnedTM.toLocaleString()} TM to your holding account.`,
+    type: 'deposit_approved',
+    createdAt: new Date().toISOString(),
+    read: false
+  });
   
   saveDB(db);
   return db;
@@ -849,6 +1126,18 @@ export const adminRejectDeposit = (depositId: string): AppDatabase => {
   
   if (user) {
     user.depositStatus = 'None';
+
+    // Dispatch Notification
+    if (!db.notifications) db.notifications = [];
+    db.notifications.unshift({
+      id: `notif_${Date.now()}_dep_rej`,
+      userId: user.id,
+      title: 'Deposit Rejected! ❌',
+      message: `Your deposit request of ${deposit.amountUSDT} USDT was rejected by the admin. Please verify your TXID and resubmit.`,
+      type: 'deposit_approved', // categorizes as deposit status
+      createdAt: new Date().toISOString(),
+      read: false
+    });
   }
   
   saveDB(db);
@@ -877,6 +1166,18 @@ export const adminApproveWithdrawal = (withdrawId: string): AppDatabase => {
     amountUSDT: -withdrawal.amountUSDT,
     description: `Approved withdrawal of ${withdrawal.amountUSDT} USDT to ${withdrawal.walletAddress}.`,
     createdAt: new Date().toISOString()
+  });
+
+  // Dispatch Notification
+  if (!db.notifications) db.notifications = [];
+  db.notifications.unshift({
+    id: `notif_${Date.now()}_wd_appr`,
+    userId: user.id,
+    title: 'Withdrawal Approved! 💸',
+    message: `Your withdrawal request of ${withdrawal.amountUSDT} USDT to ${withdrawal.walletAddress} has been approved and sent!`,
+    type: 'withdraw_approved',
+    createdAt: new Date().toISOString(),
+    read: false
   });
   
   saveDB(db);
@@ -908,6 +1209,18 @@ export const adminRejectWithdrawal = (withdrawId: string): AppDatabase => {
     amountUSDT: withdrawal.amountUSDT,
     description: `Rejected withdrawal of ${withdrawal.amountUSDT} USDT. Balance refunded.`,
     createdAt: new Date().toISOString()
+  });
+
+  // Dispatch Notification
+  if (!db.notifications) db.notifications = [];
+  db.notifications.unshift({
+    id: `notif_${Date.now()}_wd_rej`,
+    userId: user.id,
+    title: 'Withdrawal Rejected! ❌',
+    message: `Your withdrawal request of ${withdrawal.amountUSDT} USDT was rejected. ${withdrawal.amountUSDT} USDT has been refunded to your balance.`,
+    type: 'withdraw_approved',
+    createdAt: new Date().toISOString(),
+    read: false
   });
   
   saveDB(db);
@@ -987,3 +1300,93 @@ export const adminCloseTicket = (ticketId: string): AppDatabase => {
   saveDB(db);
   return db;
 };
+
+// Peer-to-Peer Transfer (TM ID to ID share)
+export const transferTMBalance = (
+  senderId: string,
+  recipientId: string,
+  amountTM: number
+): { success: boolean; message: string; db: AppDatabase; user?: UserProfile } => {
+  const db = getDB();
+  const sender = db.users.find(u => u.id === senderId);
+  if (!sender) return { success: false, message: "Sender profile not found", db };
+  if (sender.isBanned) return { success: false, message: "Your account is banned.", db, user: sender };
+  if (sender.isFrozen) return { success: false, message: "Your account is frozen.", db, user: sender };
+
+  if (amountTM <= 0) {
+    return { success: false, message: "Transfer amount must be greater than 0.", db, user: sender };
+  }
+
+  if (sender.balanceTM < amountTM) {
+    return { success: false, message: `Insufficient TM balance. You have ${sender.balanceTM} TM.`, db, user: sender };
+  }
+
+  const cleanRecipientId = recipientId.trim();
+  if (!cleanRecipientId) {
+    return { success: false, message: "Please enter a valid recipient ID.", db, user: sender };
+  }
+
+  if (senderId === cleanRecipientId) {
+    return { success: false, message: "You cannot transfer TM to yourself.", db, user: sender };
+  }
+
+  const recipient = db.users.find(u => u.id === cleanRecipientId);
+  if (!recipient) {
+    return { success: false, message: `Recipient User ID "${cleanRecipientId}" not found. Please verify the ID.`, db, user: sender };
+  }
+
+  if (recipient.isBanned) {
+    return { success: false, message: "Recipient account is banned and cannot receive TM.", db, user: sender };
+  }
+
+  // Perform the transfer
+  sender.balanceTM -= amountTM;
+  recipient.balanceTM += amountTM;
+
+  const timestamp = new Date().toISOString();
+
+  // Create transaction logs for both users
+  db.transactions.push({
+    id: `tx_sent_${Date.now()}_1`,
+    userId: senderId,
+    type: 'TransferSent',
+    amountTM: -amountTM,
+    amountUSDT: 0,
+    description: `Sent ${amountTM.toLocaleString()} TM to User ID: ${recipient.id} (${recipient.firstName})`,
+    createdAt: timestamp
+  });
+
+  db.transactions.push({
+    id: `tx_recv_${Date.now()}_2`,
+    userId: recipient.id,
+    type: 'TransferReceived',
+    amountTM: amountTM,
+    amountUSDT: 0,
+    description: `Received ${amountTM.toLocaleString()} TM from User ID: ${sender.id} (${sender.firstName})`,
+    createdAt: timestamp
+  });
+
+  saveDB(db);
+  return {
+    success: true,
+    message: `Successfully transferred ${amountTM.toLocaleString()} TM to ${recipient.firstName} (ID: ${recipient.id})!`,
+    db,
+    user: sender
+  };
+};
+
+// Complete onboarding and credit referral
+export const completeUserOnboarding = (userId: string): { success: boolean; db: AppDatabase; user: UserProfile } => {
+  const db = getDB();
+  const user = db.users.find(u => u.id === userId);
+  if (!user) return { success: false, db, user: null as any };
+  
+  user.mandatoryCompleted = true;
+  
+  // Check and process referral gating EXACTLY when onboarding completes and the user accesses the dashboard!
+  checkAndProcessReferral(userId, db);
+  
+  saveDB(db);
+  return { success: true, db, user };
+};
+

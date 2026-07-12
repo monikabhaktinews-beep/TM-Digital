@@ -1,19 +1,22 @@
 import React, { useState } from 'react';
 import { UserProfile, AppDatabase } from '../types';
-import { Copy, Users, Star, Award, Calendar, Share2, ClipboardCheck, ArrowDownLeft, ArrowUpRight } from 'lucide-react';
+import { Copy, Users, Star, Award, Calendar, Share2, ClipboardCheck, ArrowDownLeft, ArrowUpRight, Coins, TrendingUp } from 'lucide-react';
 
 interface ProfileTabProps {
   user: UserProfile;
   db: AppDatabase;
   onUpdateState: (user: UserProfile, db: AppDatabase) => void;
+  showToast?: (message: string, type?: 'success' | 'error' | 'info' | 'pending') => void;
 }
 
 export const ProfileTab: React.FC<ProfileTabProps> = ({
   user,
   db,
-  onUpdateState
+  onUpdateState,
+  showToast
 }) => {
   const [copiedLink, setCopiedLink] = useState<boolean>(false);
+  const [copiedId, setCopiedId] = useState<boolean>(false);
 
   // Calculate stats
   const totalApprovedDeposits = db.deposits
@@ -31,7 +34,19 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({
   const handleCopyReferral = () => {
     navigator.clipboard.writeText(appBotUrl);
     setCopiedLink(true);
+    if (showToast) {
+      showToast("Referral link copied to clipboard!", "success");
+    }
     setTimeout(() => setCopiedLink(false), 2000);
+  };
+
+  const handleCopyId = () => {
+    navigator.clipboard.writeText(user.id.toString());
+    setCopiedId(true);
+    if (showToast) {
+      showToast("Telegram User ID copied to clipboard!", "success");
+    }
+    setTimeout(() => setCopiedId(false), 2000);
   };
 
   // Find users invited by this profile
@@ -71,52 +86,51 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({
         </div>
       </div>
 
-      {/* Account Statistics Grid */}
-      <div className="grid grid-cols-2 gap-3">
-        <div className="glass-panel p-4 rounded-xl border border-white/5 space-y-1">
-          <div className="flex items-center gap-1 text-tg-text-muted">
-            <Calendar className="w-3.5 h-3.5 text-tg-blue" />
-            <span className="text-[10px] uppercase font-bold tracking-wider">Registration Date</span>
+      {/* Simplified Referral Statistics Grid */}
+      <div className="grid grid-cols-3 gap-2.5">
+        {/* Total Referrals */}
+        <div className="glass-panel p-3.5 rounded-2xl border border-white/5 bg-tg-surface/30 relative overflow-hidden shadow-lg flex flex-col justify-between">
+          <div className="absolute -top-3 -right-3 w-10 h-10 bg-tg-blue/5 rounded-full blur-md pointer-events-none" />
+          <div className="space-y-1">
+            <div className="flex items-center gap-1.5 text-tg-text-muted">
+              <Users className="w-3.5 h-3.5 text-tg-blue" />
+              <span className="text-[8px] uppercase font-bold tracking-widest font-display">Total Refer</span>
+            </div>
+            <div className="text-lg font-black font-display text-white font-mono tracking-tight leading-none pt-0.5">
+              {user.referralCount}
+            </div>
           </div>
-          <span className="text-xs font-semibold text-white block">
-            {new Date(user.registeredAt).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })}
-          </span>
-          <span className="text-[9px] text-tg-text-muted block">Joined community</span>
+          <span className="text-[8.5px] text-tg-text-muted/75 block pt-2 leading-none">Invites sent</span>
         </div>
 
-        <div className="glass-panel p-4 rounded-xl border border-white/5 space-y-1">
-          <div className="flex items-center gap-1 text-tg-text-muted">
-            <Award className="w-3.5 h-3.5 text-amber-400" />
-            <span className="text-[10px] uppercase font-bold tracking-wider">Active TM Balance</span>
+        {/* Reward per referral */}
+        <div className="glass-panel p-3.5 rounded-2xl border border-white/5 bg-tg-surface/30 relative overflow-hidden shadow-lg flex flex-col justify-between">
+          <div className="absolute -top-3 -right-3 w-10 h-10 bg-amber-400/5 rounded-full blur-md pointer-events-none" />
+          <div className="space-y-1">
+            <div className="flex items-center gap-1.5 text-tg-text-muted">
+              <Coins className="w-3.5 h-3.5 text-amber-400" />
+              <span className="text-[8px] uppercase font-bold tracking-widest font-display font-semibold">Amount</span>
+            </div>
+            <div className="text-sm sm:text-base font-black font-display text-amber-400 font-mono tracking-tight leading-none pt-0.5">
+              {db.settings.referralRewardTM || 50} TM
+            </div>
           </div>
-          <span className="text-sm font-bold text-amber-400 font-mono block">
-            {user.balanceTM.toLocaleString()} TM
-          </span>
-          <span className="text-[9px] text-tg-text-muted block">
-            ≈ ${(user.balanceTM / db.settings.conversionRate).toFixed(2)} USDT
-          </span>
+          <span className="text-[8.5px] text-tg-text-muted/75 block pt-2 leading-none">Per invite</span>
         </div>
 
-        <div className="glass-panel p-4 rounded-xl border border-white/5 space-y-1">
-          <div className="flex items-center gap-1 text-tg-text-muted">
-            <ArrowDownLeft className="w-3.5 h-3.5 text-emerald-400" />
-            <span className="text-[10px] uppercase font-bold tracking-wider">Total Approved Deposits</span>
+        {/* Total Referral Revenue */}
+        <div className="glass-panel p-3.5 rounded-2xl border border-white/5 bg-tg-surface/30 relative overflow-hidden shadow-lg flex flex-col justify-between">
+          <div className="absolute -top-3 -right-3 w-10 h-10 bg-emerald-500/5 rounded-full blur-md pointer-events-none" />
+          <div className="space-y-1">
+            <div className="flex items-center gap-1.5 text-tg-text-muted">
+              <TrendingUp className="w-3.5 h-3.5 text-emerald-400" />
+              <span className="text-[8px] uppercase font-bold tracking-widest font-display">Revenue</span>
+            </div>
+            <div className="text-sm sm:text-base font-black font-display text-emerald-400 font-mono tracking-tight leading-none pt-0.5 truncate">
+              {(user.referralEarningsTM ?? (user.referralCount * (db.settings.referralRewardTM || 50))).toLocaleString()} TM
+            </div>
           </div>
-          <span className="text-sm font-bold text-white font-mono block">
-            ${totalApprovedDeposits.toFixed(2)} USDT
-          </span>
-          <span className="text-[9px] text-tg-text-muted block">Required for rule unlocks</span>
-        </div>
-
-        <div className="glass-panel p-4 rounded-xl border border-white/5 space-y-1">
-          <div className="flex items-center gap-1 text-tg-text-muted">
-            <ArrowUpRight className="w-3.5 h-3.5 text-rose-400" />
-            <span className="text-[10px] uppercase font-bold tracking-wider">Approved Withdrawals</span>
-          </div>
-          <span className="text-sm font-bold text-white font-mono block">
-            ${totalApprovedWithdrawals.toFixed(2)} USDT
-          </span>
-          <span className="text-[9px] text-tg-text-muted block">Processed payouts</span>
+          <span className="text-[8.5px] text-tg-text-muted/75 block pt-2 leading-none font-medium">Earned TM</span>
         </div>
       </div>
 
@@ -134,6 +148,37 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({
           </div>
         </div>
 
+        {/* Copy User ID Widget */}
+        <div className="space-y-2 pt-1">
+          <span className="text-[10px] text-tg-text-muted uppercase tracking-wider font-bold block">Your Referral User ID:</span>
+          
+          <div className="flex items-center gap-1.5 bg-tg-dark/50 border border-white/5 rounded-xl p-2.5">
+            <span className="text-xs font-mono select-all truncate text-amber-400 font-bold block flex-1">
+              {user.id}
+            </span>
+            <button
+              onClick={handleCopyId}
+              className={`p-2 rounded-lg font-semibold transition shrink-0 flex items-center gap-1 cursor-pointer ${
+                copiedId 
+                  ? 'bg-emerald-500/10 text-emerald-400' 
+                  : 'bg-tg-blue hover:bg-tg-blue-light text-white text-[11px]'
+              }`}
+            >
+              {copiedId ? (
+                <>
+                  <ClipboardCheck className="w-3.5 h-3.5" />
+                  <span>Copied!</span>
+                </>
+              ) : (
+                <>
+                  <Copy className="w-3.5 h-3.5" />
+                  <span>Copy User ID</span>
+                </>
+              )}
+            </button>
+          </div>
+        </div>
+
         {/* Copy referral link widget */}
         <div className="space-y-2 pt-1">
           <span className="text-[10px] text-tg-text-muted uppercase tracking-wider font-bold block">Your Custom Referral Link:</span>
@@ -144,7 +189,7 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({
             </span>
             <button
               onClick={handleCopyReferral}
-              className={`p-2 rounded-lg font-semibold transition shrink-0 flex items-center gap-1 ${
+              className={`p-2 rounded-lg font-semibold transition shrink-0 flex items-center gap-1 cursor-pointer ${
                 copiedLink 
                   ? 'bg-emerald-500/10 text-emerald-400' 
                   : 'bg-tg-blue hover:bg-tg-blue-light text-white text-[11px]'

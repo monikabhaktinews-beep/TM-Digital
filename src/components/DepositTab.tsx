@@ -1,162 +1,37 @@
-import React, { useState, useRef } from 'react';
+import React, { useState } from 'react';
 import { UserProfile, AppDatabase } from '../types';
 import { submitDeposit } from '../lib/db';
-import { Copy, QrCode, FileText, Upload, Image as ImageIcon, CheckCircle, AlertCircle, Sparkles } from 'lucide-react';
+import { Copy, QrCode, CheckCircle, AlertCircle } from 'lucide-react';
 
 interface DepositTabProps {
   user: UserProfile;
   db: AppDatabase;
   onUpdateState: (user: UserProfile, db: AppDatabase) => void;
   onNavigateToTab: (tab: string) => void;
+  showToast?: (message: string, type?: 'success' | 'error' | 'info' | 'pending') => void;
 }
 
 export const DepositTab: React.FC<DepositTabProps> = ({
   user,
   db,
   onUpdateState,
-  onNavigateToTab
+  onNavigateToTab,
+  showToast
 }) => {
   const [amount, setAmount] = useState<string>('');
   const [txid, setTxid] = useState<string>('');
-  const [screenshotUrl, setScreenshotUrl] = useState<string>('');
   const [isCopied, setIsCopied] = useState<boolean>(false);
   const [loading, setLoading] = useState<boolean>(false);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  const fileInputRef = useRef<HTMLInputElement>(null);
-
   const handleCopyAddress = () => {
     navigator.clipboard.writeText(db.settings.walletAddressUSDT);
     setIsCopied(true);
+    if (showToast) {
+      showToast("USDT BEP20 address copied to clipboard!", "success");
+    }
     setTimeout(() => setIsCopied(false), 2000);
-  };
-
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setScreenshotUrl(reader.result as string);
-      };
-      reader.readAsDataURL(file);
-    }
-  };
-
-  // Auto-generate a beautiful mock receipt to make testing seamless
-  const handleGenerateMockReceipt = () => {
-    if (!amount || Number(amount) <= 0) {
-      alert("Please enter a valid deposit amount (e.g. 1 USDT) first.");
-      return;
-    }
-    
-    const mockTx = txid.trim() || `0x${Math.random().toString(16).slice(2, 10)}...${Math.random().toString(16).slice(2, 10)}`;
-    if (!txid) setTxid(`0x${Math.random().toString(36).substring(2, 15)}${Math.random().toString(36).substring(2, 15)}`);
-
-    // Draw a digital receipt on HTML Canvas
-    const canvas = document.createElement('canvas');
-    canvas.width = 400;
-    canvas.height = 500;
-    const ctx = canvas.getContext('2d');
-    
-    if (ctx) {
-      // Background gradient
-      const grad = ctx.createLinearGradient(0, 0, 0, 500);
-      grad.addColorStop(0, '#0e1621');
-      grad.addColorStop(1, '#17212b');
-      ctx.fillStyle = grad;
-      ctx.fillRect(0, 0, 400, 500);
-
-      // Rounded border lines
-      ctx.strokeStyle = '#2481cc';
-      ctx.lineWidth = 4;
-      ctx.strokeRect(10, 10, 380, 480);
-
-      // Header logo/title
-      ctx.fillStyle = '#2481cc';
-      ctx.font = 'bold 24px "Space Grotesk"';
-      ctx.textAlign = 'center';
-      ctx.fillText('TM DIGITAL NETWORK', 200, 50);
-
-      // Success Badge
-      ctx.fillStyle = '#22c55e';
-      ctx.beginPath();
-      ctx.arc(200, 120, 35, 0, Math.PI * 2);
-      ctx.fill();
-
-      ctx.fillStyle = '#ffffff';
-      ctx.font = 'bold 36px "Inter"';
-      ctx.fillText('✓', 200, 132);
-
-      // Receipt details
-      ctx.fillStyle = '#ffffff';
-      ctx.font = '16px "Inter"';
-      ctx.fillText('Transaction Confirmed', 200, 185);
-
-      ctx.fillStyle = '#708499';
-      ctx.font = '12px "Inter"';
-      ctx.fillText('TRC20 Blockchain Transfer', 200, 205);
-
-      // Divider line
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)';
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.moveTo(40, 230);
-      ctx.lineTo(360, 230);
-      ctx.stroke();
-
-      // Details block
-      ctx.textAlign = 'left';
-      ctx.font = '13px "Inter"';
-
-      // Amount Row
-      ctx.fillStyle = '#708499';
-      ctx.fillText('Transfer Amount:', 50, 260);
-      ctx.fillStyle = '#22c55e';
-      ctx.font = 'bold 18px "JetBrains Mono"';
-      ctx.fillText(`${Number(amount).toFixed(2)} USDT`, 210, 260);
-
-      // Status Row
-      ctx.fillStyle = '#708499';
-      ctx.font = '13px "Inter"';
-      ctx.fillText('Payment Status:', 50, 295);
-      ctx.fillStyle = '#22c55e';
-      ctx.font = 'bold 13px "Inter"';
-      ctx.fillText('SUCCESS', 210, 295);
-
-      // Recipient Wallet Row
-      ctx.fillStyle = '#708499';
-      ctx.font = '13px "Inter"';
-      ctx.fillText('To USDT Wallet:', 50, 330);
-      ctx.fillStyle = '#ffffff';
-      ctx.font = '10px "JetBrains Mono"';
-      ctx.fillText(db.settings.walletAddressUSDT.substring(0, 26) + '...', 210, 330);
-
-      // TXID Row
-      ctx.fillStyle = '#708499';
-      ctx.font = '13px "Inter"';
-      ctx.fillText('Transaction ID:', 50, 365);
-      ctx.fillStyle = '#ffffff';
-      ctx.font = '10px "JetBrains Mono"';
-      ctx.fillText(mockTx.substring(0, 22) + '...', 210, 365);
-
-      // Date Row
-      ctx.fillStyle = '#708499';
-      ctx.font = '13px "Inter"';
-      ctx.fillText('Timestamp:', 50, 400);
-      ctx.fillStyle = '#ffffff';
-      ctx.font = '12px "Inter"';
-      ctx.fillText(new Date().toLocaleString(), 210, 400);
-
-      // Footer brand stamp
-      ctx.textAlign = 'center';
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.05)';
-      ctx.font = 'bold 36px "Space Grotesk"';
-      ctx.fillText('VERIFIED', 200, 450);
-      
-      const imgBase64 = canvas.toDataURL('image/png');
-      setScreenshotUrl(imgBase64);
-    }
   };
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -167,33 +42,41 @@ export const DepositTab: React.FC<DepositTabProps> = ({
     const amtNum = parseFloat(amount);
     if (!amount || isNaN(amtNum) || amtNum <= 0) {
       setErrorMsg("Please enter a valid deposit amount in USDT.");
+      if (showToast) showToast("Invalid deposit amount.", "error");
+      return;
+    }
+
+    const minDeposit = db.settings.depositMinUSDT ?? 1.0;
+    if (amtNum < minDeposit) {
+      setErrorMsg(`Minimum deposit amount is ${minDeposit} USDT.`);
+      if (showToast) showToast(`Minimum deposit is ${minDeposit} USDT.`, "error");
       return;
     }
 
     if (!txid.trim()) {
       setErrorMsg("Transaction Hash (TXID) is required to verify the blockchain transfer.");
-      return;
-    }
-
-    if (!screenshotUrl) {
-      setErrorMsg("Please upload a deposit receipt screenshot or click 'Generate Demo Mock Receipt'.");
+      if (showToast) showToast("Transaction TXID hash is required.", "error");
       return;
     }
 
     setLoading(true);
 
     setTimeout(() => {
-      const res = submitDeposit(user.id, amtNum, txid.trim(), screenshotUrl);
+      const res = submitDeposit(user.id, amtNum, txid.trim(), "");
       setLoading(false);
       
       if (res.success) {
         onUpdateState(res.user, res.db);
-        setSuccessMsg(res.message);
+        if (showToast) {
+          showToast("Deposit submitted! Admin will audit the TXID shortly.", "success");
+        } else {
+          setSuccessMsg(res.message);
+        }
         setAmount('');
         setTxid('');
-        setScreenshotUrl('');
       } else {
         setErrorMsg(res.message);
+        if (showToast) showToast(res.message, "error");
       }
     }, 1500);
   };
@@ -206,9 +89,9 @@ export const DepositTab: React.FC<DepositTabProps> = ({
       {/* USDT QR and Copy section */}
       <div className="glass-panel p-5 rounded-2xl border border-white/5 flex flex-col items-center text-center space-y-4">
         <div>
-          <h3 className="font-semibold text-base text-white font-display">Deposit USDT (TRC20 Network Only)</h3>
+          <h3 className="font-semibold text-base text-white font-display">Deposit USDT (BEP20 Network Only)</h3>
           <p className="text-xs text-tg-text-muted mt-1 max-w-sm">
-            Transfer USDT from any external exchange or wallet to our verified account below. Ensure you select the TRON (TRC20) network.
+            Transfer USDT from any external exchange or wallet to our verified account below. Ensure you select the Binance Smart Chain (BEP20 / BSC) network.
           </p>
         </div>
 
@@ -286,55 +169,7 @@ export const DepositTab: React.FC<DepositTabProps> = ({
             />
           </div>
 
-          {/* Screenshot file upload / generator */}
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <label className="text-[10px] text-tg-text-muted uppercase tracking-wider font-bold block">Transfer Screenshot/Receipt</label>
-              
-              <button
-                type="button"
-                onClick={handleGenerateMockReceipt}
-                className="text-[10px] text-tg-blue hover:text-tg-blue-light font-bold flex items-center gap-1 bg-tg-blue/10 px-2 py-1 rounded transition"
-              >
-                <Sparkles className="w-3 h-3 text-amber-400 animate-pulse" />
-                <span>Generate Demo Mock Receipt</span>
-              </button>
-            </div>
 
-            <div 
-              onClick={() => fileInputRef.current?.click()}
-              className="border-2 border-dashed border-white/5 hover:border-tg-blue/30 rounded-xl p-5 text-center cursor-pointer transition bg-tg-dark/20 flex flex-col items-center gap-1.5 relative overflow-hidden group min-h-32 justify-center"
-            >
-              <input 
-                type="file" 
-                ref={fileInputRef} 
-                onChange={handleFileUpload} 
-                accept="image/*" 
-                className="hidden" 
-              />
-              
-              {screenshotUrl ? (
-                <div className="absolute inset-0 bg-tg-dark/90 flex flex-col items-center justify-center p-3 text-xs gap-1.5 group-hover:opacity-100 transition-opacity">
-                  <img 
-                    src={screenshotUrl} 
-                    alt="Receipt Screenshot" 
-                    className="w-20 h-20 object-cover rounded border border-white/10 mb-1" 
-                    referrerPolicy="no-referrer"
-                  />
-                  <span className="text-[10px] text-emerald-400 font-bold flex items-center gap-1">
-                    <FileText className="w-3.5 h-3.5" />
-                    <span>Receipt Attached (Tap to change)</span>
-                  </span>
-                </div>
-              ) : (
-                <>
-                  <Upload className="w-6 h-6 text-tg-text-muted group-hover:text-tg-blue transition-colors" />
-                  <span className="text-xs font-semibold text-white">Upload Screenshot image</span>
-                  <span className="text-[10px] text-tg-text-muted">Supports JPG, PNG files. Max 5MB.</span>
-                </>
-              )}
-            </div>
-          </div>
 
           {errorMsg && (
             <div className="bg-red-950/40 border border-red-500/30 text-red-300 p-2.5 rounded-lg text-xs font-semibold flex items-start gap-1.5">

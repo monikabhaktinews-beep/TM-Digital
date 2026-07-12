@@ -8,13 +8,15 @@ interface WithdrawTabProps {
   db: AppDatabase;
   onUpdateState: (user: UserProfile, db: AppDatabase) => void;
   onNavigateToTab: (tab: string) => void;
+  showToast?: (message: string, type?: 'success' | 'error' | 'info' | 'pending') => void;
 }
 
 export const WithdrawTab: React.FC<WithdrawTabProps> = ({
   user,
   db,
   onUpdateState,
-  onNavigateToTab
+  onNavigateToTab,
+  showToast
 }) => {
   const [amount, setAmount] = useState<string>('');
   const [walletAddress, setWalletAddress] = useState<string>('');
@@ -25,6 +27,9 @@ export const WithdrawTab: React.FC<WithdrawTabProps> = ({
   // Compute lifetime approved deposits
   const lifetimeDeposits = getLifetimeApprovedDeposits(user.id, db);
 
+  // Find the first rule that is not yet satisfied
+  const nextLockedRule = db.withdrawalRules.find(rule => lifetimeDeposits < rule.requiredLifetimeDepositUSDT);
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg(null);
@@ -33,16 +38,19 @@ export const WithdrawTab: React.FC<WithdrawTabProps> = ({
     const amtNum = parseFloat(amount);
     if (!amount || isNaN(amtNum) || amtNum <= 0) {
       setErrorMsg("Please enter a valid withdrawal amount.");
+      if (showToast) showToast("Invalid withdrawal amount.", "error");
       return;
     }
 
     if (amtNum < 0.1) {
       setErrorMsg("Minimum withdrawal amount is 0.1 USDT.");
+      if (showToast) showToast("Minimum withdrawal is 0.1 USDT.", "error");
       return;
     }
 
     if (!walletAddress.trim()) {
-      setErrorMsg("Please enter your receiving USDT TRC20 Wallet Address.");
+      setErrorMsg("Please enter your receiving USDT BEP20 Wallet Address.");
+      if (showToast) showToast("Receiving address is required.", "error");
       return;
     }
 
@@ -54,11 +62,16 @@ export const WithdrawTab: React.FC<WithdrawTabProps> = ({
       
       if (res.success) {
         onUpdateState(res.user, res.db);
-        setSuccessMsg(res.message);
+        if (showToast) {
+          showToast("Withdrawal submitted! Admin will process the transaction soon.", "success");
+        } else {
+          setSuccessMsg(res.message);
+        }
         setAmount('');
         setWalletAddress('');
       } else {
         setErrorMsg(res.message);
+        if (showToast) showToast(res.message, "error");
       }
     }, 1500);
   };
@@ -96,45 +109,42 @@ export const WithdrawTab: React.FC<WithdrawTabProps> = ({
       <div className="glass-panel p-5 rounded-2xl border border-white/5 space-y-3">
         <div>
           <h4 className="font-semibold text-sm text-white font-display flex items-center gap-1.5">
-            <ShieldAlert className="w-4 h-4 text-tg-blue" />
-            <span>Anti-Fraud Withdrawal Rules</span>
+            <ShieldAlert className="w-4 h-4 text-amber-400 animate-pulse" />
+            <span>Anti-Fake Verification Check</span>
           </h4>
           <p className="text-[10px] text-tg-text-muted leading-relaxed">
-            To maintain database health and prevent bot abuse, withdrawal tiers are unlocked based strictly on your <strong className="text-tg-blue-light">Lifetime Approved Deposit History</strong>.
+            A one-time security deposit is required to verify your wallet and prevent multiple fake accounts or automated bot spam.
           </p>
         </div>
 
         <div className="space-y-2">
-          {db.withdrawalRules.map((rule) => {
-            const isEligible = lifetimeDeposits >= rule.requiredLifetimeDepositUSDT;
-            return (
-              <div 
-                key={rule.id}
-                className={`p-3 rounded-xl border text-xs flex items-center justify-between gap-3 ${
-                  isEligible 
-                    ? 'bg-emerald-950/10 border-emerald-500/20 text-emerald-300' 
-                    : 'bg-tg-dark/40 border-white/5 text-tg-text-muted'
-                }`}
-              >
-                <div className="space-y-0.5">
-                  <span className={`font-semibold ${isEligible ? 'text-white' : 'text-tg-text-muted'}`}>
-                    Withdraw {rule.minAmountUSDT} – {rule.maxAmountUSDT} USDT
-                  </span>
-                  <p className="text-[10px] opacity-80">
-                    Requires lifetime deposit history of <strong className={isEligible ? 'text-emerald-400' : 'text-tg-text'}>${rule.requiredLifetimeDepositUSDT.toFixed(2)} USDT</strong>
-                  </p>
-                </div>
-
-                <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded ${
-                  isEligible 
-                    ? 'bg-emerald-500/10 text-emerald-400' 
-                    : 'bg-white/5 text-tg-text-muted border border-white/5'
-                }`}>
-                  {isEligible ? 'Eligible' : 'Locked'}
+          {nextLockedRule ? (
+            <div className="p-3.5 rounded-xl border text-xs flex items-center justify-between gap-3 bg-amber-950/10 border-amber-500/25 text-amber-300">
+              <div className="space-y-1">
+                <span className="font-semibold text-white text-xs block">
+                  One-Time Security Deposit Verification
                 </span>
+                <p className="text-[10px] opacity-80 leading-relaxed">
+                  Deposit a total of <strong className="text-amber-400">$1.00 USDT</strong> on BEP20 (BSC Network) to verify your account. Once verified, you can withdraw any amount as many times as you like. You have currently deposited <strong className="text-white">${lifetimeDeposits.toFixed(2)} USDT</strong>.
+                </p>
               </div>
-            );
-          })}
+              <span className="text-[9px] font-bold uppercase px-2.5 py-1 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 shrink-0">
+                Not Verified
+              </span>
+            </div>
+          ) : (
+            <div className="p-3.5 rounded-xl border text-xs flex items-center justify-between gap-3 bg-emerald-950/10 border-emerald-500/25 text-emerald-300">
+              <div className="space-y-1">
+                <span className="font-semibold text-white text-xs block">Anti-Fake Verification Completed!</span>
+                <p className="text-[10px] opacity-80 leading-relaxed">
+                  Congratulations! Your account is verified with a lifetime approved deposit total of <strong className="text-emerald-400">${lifetimeDeposits.toFixed(2)} USDT</strong>. Lifetime unlimited withdrawals are fully unlocked.
+                </p>
+              </div>
+              <span className="text-[9px] font-bold uppercase px-2.5 py-1 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 shrink-0">
+                Verified
+              </span>
+            </div>
+          )}
         </div>
       </div>
 
@@ -160,10 +170,10 @@ export const WithdrawTab: React.FC<WithdrawTabProps> = ({
           </div>
 
           <div className="space-y-1.5">
-            <label className="text-[10px] text-tg-text-muted uppercase tracking-wider font-bold block">Your Receiving USDT Wallet Address (TRC20 Only)</label>
+            <label className="text-[10px] text-tg-text-muted uppercase tracking-wider font-bold block">Your Receiving USDT Wallet Address (BEP20 Only)</label>
             <input
               type="text"
-              placeholder="Enter your USDT TRC20 Wallet Address"
+              placeholder="Enter your USDT BEP20 Wallet Address"
               value={walletAddress}
               onChange={(e) => setWalletAddress(e.target.value)}
               className="w-full bg-tg-dark/50 border border-white/5 focus:border-tg-blue/50 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none transition font-mono font-bold"

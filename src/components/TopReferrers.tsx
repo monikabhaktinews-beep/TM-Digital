@@ -14,85 +14,58 @@ interface LeaderboardEntry {
   firstName: string;
   lastName?: string;
   username: string;
-  photoUrl: string;
+  photoUrl?: string;
   referralCount: number;
   isCurrentUser: boolean;
 }
 
-const AVATAR_POOL = [
-  "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=80&h=80&fit=crop&crop=faces",
-  "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=80&h=80&fit=crop&crop=faces",
-  "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=80&h=80&fit=crop&crop=faces",
-  "https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=80&h=80&fit=crop&crop=faces",
-  "https://images.unsplash.com/photo-1522075469751-3a6694fb2f61?w=80&h=80&fit=crop&crop=faces",
-  "https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=80&h=80&fit=crop&crop=faces",
-  "https://images.unsplash.com/photo-1554151228-14d9def656e4?w=80&h=80&fit=crop&crop=faces",
-  "https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?w=80&h=80&fit=crop&crop=faces",
-  "https://images.unsplash.com/photo-1531746020798-e6953c6e8e04?w=80&h=80&fit=crop&crop=faces",
-  "https://images.unsplash.com/photo-1438761681033-6461ffad8d80?w=80&h=80&fit=crop&crop=faces"
-];
+// Custom avatar component to handle missing or broken Telegram profile pictures elegantly
+const LeaderboardAvatar: React.FC<{ photoUrl?: string; firstName: string }> = ({ photoUrl, firstName }) => {
+  const [error, setError] = useState(false);
+  const initials = firstName ? firstName[0].toUpperCase() : '?';
 
-const FIRST_NAMES = [
-  "Alex", "Sophia", "Dmitry", "Fatima", "Carlos", "Yuki", "Chloe", "Arjun", "Amara", "Sergei",
-  "Maxim", "Elena", "Lucas", "Olivia", "Ethan", "Zoe", "Leo", "Mia", "Noah", "Emma",
-  "Viktor", "Svetlana", "Ivan", "Anna", "Pavel", "Maria", "Igor", "Olga", "Andrey", "Tatiana",
-  "Liam", "Ava", "Oliver", "Isabella", "James", "Sophia", "Benjamin", "Charlotte", "Mason", "Amelia"
-];
+  if (!photoUrl || error) {
+    return (
+      <div className="w-8 h-8 rounded-full bg-tg-blue/20 text-tg-blue-light border border-white/5 flex items-center justify-center font-bold text-xs shrink-0 font-sans">
+        {initials}
+      </div>
+    );
+  }
 
-const LAST_NAMES = [
-  "Petrov", "Sokolov", "Ivanov", "Smirnov", "Kuznetsov", "Popov", "Vasiliev", "Morozov", "Novikov", "Fedorov",
-  "Smith", "Johnson", "Williams", "Brown", "Jones", "Garcia", "Miller", "Davis", "Rodriguez", "Martinez"
-];
+  return (
+    <img
+      src={photoUrl}
+      alt={firstName}
+      className="w-8 h-8 rounded-full border border-white/5 object-cover shrink-0"
+      referrerPolicy="no-referrer"
+      onError={() => setError(true)}
+    />
+  );
+};
 
 export const TopReferrers: React.FC<TopReferrersProps> = ({ currentUser, db }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [showAll, setShowAll] = useState(false);
 
-  // Generate 95 deterministic mock referrers and merge them with active DB users
+  // Filter real users from DB who have referrals
   const leaderboard: LeaderboardEntry[] = useMemo(() => {
     const list: LeaderboardEntry[] = [];
 
-    // 1. Add real users from DB
+    // Add real users from DB who have active referrals
     db.users.forEach((u) => {
-      list.push({
-        id: u.id,
-        firstName: u.firstName,
-        lastName: u.lastName,
-        username: u.username || 'NoUsername',
-        photoUrl: u.photoUrl,
-        referralCount: u.referralCount,
-        isCurrentUser: u.id === currentUser.id,
-        rank: 0, // Assigned later
-      });
+      if (u.referralCount > 0) {
+        list.push({
+          id: u.id,
+          firstName: u.firstName,
+          lastName: u.lastName,
+          username: u.username || 'NoUsername',
+          photoUrl: u.photoUrl,
+          referralCount: u.referralCount,
+          isCurrentUser: u.id === currentUser.id,
+          rank: 0, // Assigned later
+        });
+      }
     });
-
-    // 2. Generate 95 high-fidelity mock users to form a rich leaderboard up to 100+ entries
-    for (let i = 1; i <= 95; i++) {
-      const mockId = `mock_${i}`;
-      // Skip if somehow ID clashes with real user
-      if (db.users.some((u) => u.id === mockId)) continue;
-
-      // Seed-like deterministic generation based on index i
-      const firstName = FIRST_NAMES[i % FIRST_NAMES.length];
-      const lastName = LAST_NAMES[(i * 3) % LAST_NAMES.length];
-      const username = `${firstName.toLowerCase()}_${i * 7}`;
-      const photoUrl = AVATAR_POOL[(i * 2) % AVATAR_POOL.length];
-
-      // Smooth decay referral count curve: starts around 78, drops down to 1
-      const baseReferralCount = Math.max(1, Math.floor(78 - Math.pow(i, 0.72) * 2.1));
-      const referralCount = baseReferralCount + (i % 3); // Add tiny stable variance
-
-      list.push({
-        id: mockId,
-        firstName,
-        lastName,
-        username,
-        photoUrl,
-        referralCount,
-        isCurrentUser: false,
-        rank: 0,
-      });
-    }
 
     // Sort by referralCount DESC, break ties with username
     list.sort((a, b) => {
@@ -225,25 +198,17 @@ export const TopReferrers: React.FC<TopReferrersProps> = ({ currentUser, db }) =
                     </div>
 
                     {/* Profile image */}
-                    <img
-                      src={entry.photoUrl}
-                      alt={entry.firstName}
-                      className="w-8 h-8 rounded-full border border-white/5 object-cover shrink-0"
-                      referrerPolicy="no-referrer"
-                    />
+                    <LeaderboardAvatar photoUrl={entry.photoUrl} firstName={entry.firstName} />
 
-                    {/* Name / Username */}
-                    <div className="text-left overflow-hidden max-w-[150px] sm:max-w-[200px]">
-                      <span className="font-semibold text-xs text-white block truncate">
+                    {/* Name */}
+                    <div className="text-left overflow-hidden max-w-[150px] sm:max-w-[200px] flex items-center">
+                      <span className="font-semibold text-xs text-white truncate">
                         {entry.firstName} {entry.lastName || ''}
                         {entry.isCurrentUser && (
-                          <span className="ml-1 px-1.5 py-0.2 text-[8px] bg-tg-blue text-white rounded-full uppercase font-extrabold font-sans">
+                          <span className="ml-1.5 px-1.5 py-0.2 text-[8px] bg-tg-blue text-white rounded-full uppercase font-extrabold font-sans">
                             You
                           </span>
                         )}
-                      </span>
-                      <span className="text-[10px] text-tg-text-muted block truncate">
-                        @{entry.username}
                       </span>
                     </div>
                   </div>
@@ -261,8 +226,15 @@ export const TopReferrers: React.FC<TopReferrersProps> = ({ currentUser, db }) =
           </AnimatePresence>
 
           {displayedEntries.length === 0 && (
-            <div className="text-center py-6 text-xs text-tg-text-muted">
-              No matching ranked referrers found.
+            <div className="text-center py-10 px-4 space-y-3">
+              <div className="p-4 bg-white/5 rounded-full border border-dashed border-white/5 text-tg-text-muted w-14 h-14 flex items-center justify-center mx-auto">
+                <Users className="w-6 h-6 opacity-30" />
+              </div>
+              <p className="text-xs text-tg-text-muted max-w-xs mx-auto leading-relaxed">
+                {searchQuery.trim() 
+                  ? "No matching ranked referrers found." 
+                  : "No referral rankings available yet. Invite friends to become the first on the leaderboard."}
+              </p>
             </div>
           )}
         </div>

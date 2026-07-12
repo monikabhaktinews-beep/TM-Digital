@@ -7,11 +7,14 @@ import DashboardTab from './components/DashboardTab';
 import DepositTab from './components/DepositTab';
 import WithdrawTab from './components/WithdrawTab';
 import ProfileTab from './components/ProfileTab';
+import LeaderboardTab from './components/LeaderboardTab';
 import SupportTab from './components/SupportTab';
 import AdminPanel from './components/AdminPanel';
+import { MandatoryTasksPopup } from './components/MandatoryTasksPopup';
+import { NotificationCenter } from './components/NotificationCenter';
 import { 
-  CheckSquare, BarChart2, ArrowDownLeft, ArrowUpRight, User, HelpCircle, 
-  Lock, KeyRound, AlertTriangle, MessageSquare, Bot 
+  CheckSquare, BarChart2, ArrowDownLeft, ArrowUpRight, User, HelpCircle, Trophy,
+  Lock, KeyRound, AlertTriangle, MessageSquare, Bot, Bell, Shield, Info, CheckCircle2, AlertCircle, RefreshCw
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -23,6 +26,18 @@ export default function App() {
   const [isAdminView, setIsAdminView] = useState<boolean>(false);
   const [showLockedModal, setShowLockedModal] = useState<boolean>(false);
   const [blockedTab, setBlockedTab] = useState<string>('');
+
+  // Notification center and Toast states
+  const [showNotifCenter, setShowNotifCenter] = useState<boolean>(false);
+  const [toasts, setToasts] = useState<{ id: string; type: 'success' | 'error' | 'info' | 'pending'; message: string }[]>([]);
+
+  const showToast = (message: string, type: 'success' | 'error' | 'info' | 'pending' = 'success') => {
+    const id = `toast_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    setToasts((prev) => [...prev, { id, type, message }]);
+    setTimeout(() => {
+      setToasts((prev) => prev.filter((t) => t.id !== id));
+    }, 4000);
+  };
 
   // Auto-detect Admin path in browser
   useEffect(() => {
@@ -72,7 +87,9 @@ export default function App() {
   const completedTaskIds = db.completedTasks[userProfile.id] || [];
   const completedMandatoryCount = mandatoryTasks.filter(t => completedTaskIds.includes(t.id)).length;
   const totalMandatoryCount = mandatoryTasks.length;
-  const isUnlocked = completedMandatoryCount === totalMandatoryCount;
+  
+  // Stricter unlock checks
+  const isUnlocked = userProfile.mandatoryCompleted || (completedMandatoryCount >= Math.min(db.settings.mandatoryTaskCount ?? totalMandatoryCount, totalMandatoryCount));
 
   const navigateToTab = (tabId: string) => {
     if (tabId === 'tasks') {
@@ -103,6 +120,9 @@ export default function App() {
     setIsAdminView(false);
     window.location.hash = '';
   };
+
+  // Unread notification count for active user
+  const unreadCount = (db.notifications || []).filter(n => n.userId === userProfile.id && !n.read).length;
 
   // -------------------------------------------------------------
   // ADMIN WORKSPACE ROUTE
@@ -140,28 +160,52 @@ export default function App() {
       )}
 
       {/* Primary body view wrapper */}
-      <main className="flex-1 max-w-md w-full mx-auto p-4 pb-28 space-y-4">
+      <main className="flex-1 max-w-md w-full mx-auto p-4 pb-32 space-y-4">
         {/* Header client identity */}
-        <div className="flex items-center justify-between bg-tg-surface/40 p-3.5 rounded-2xl border border-white/5 relative overflow-hidden">
+        <div className="flex items-center justify-between glass-panel p-4 rounded-2xl relative overflow-hidden shadow-xl shadow-black/30">
+          <div className="absolute top-0 right-0 w-32 h-32 bg-tg-blue/10 rounded-full blur-3xl pointer-events-none" />
+          
           <div className="flex items-center gap-3">
-            <img 
-              src={userProfile.photoUrl} 
-              alt={userProfile.firstName} 
-              className="w-10 h-10 rounded-full border border-tg-blue/30 object-cover" 
-              referrerPolicy="no-referrer"
-            />
+            <div className="relative">
+              <img 
+                src={userProfile.photoUrl} 
+                alt={userProfile.firstName} 
+                className="w-11 h-11 rounded-full border border-tg-blue/45 object-cover shadow-md" 
+                referrerPolicy="no-referrer"
+              />
+              <span className="absolute bottom-0 right-0 w-3 h-3 bg-emerald-500 rounded-full border-2 border-tg-dark shadow" />
+            </div>
             <div>
-              <div className="flex items-center gap-1">
-                <span className="font-bold text-sm text-white font-display leading-tight">{userProfile.firstName}</span>
-                <span className="text-[10px] bg-tg-blue/15 text-tg-blue-light font-mono px-1 py-0.2 rounded font-bold">VIP</span>
+              <div className="flex items-center gap-1.5">
+                <span className="font-extrabold text-sm text-white font-display leading-none tracking-tight">{userProfile.firstName}</span>
+                <span className="text-[8px] bg-tg-blue/15 text-tg-blue-light font-mono px-1.5 py-0.5 rounded-md font-bold border border-tg-blue/20">VIP LEVEL</span>
               </div>
-              <span className="text-xs text-tg-text-muted">@{userProfile.username || 'NoUsername'}</span>
+              <span className="text-xs text-tg-text-muted/80">@{userProfile.username || 'NoUsername'}</span>
             </div>
           </div>
 
-          <div className="text-right">
-            <span className="text-[9px] uppercase font-bold tracking-wider text-tg-text-muted block">TM Active Balance</span>
-            <span className="text-sm font-extrabold font-display text-amber-400 font-mono">{userProfile.balanceTM.toLocaleString()} <span className="text-[10px] font-sans font-bold">TM</span></span>
+          <div className="flex items-center gap-2.5">
+            {/* System alert bell */}
+            <button
+              onClick={() => setShowNotifCenter(true)}
+              className="p-2 rounded-xl bg-white/5 border border-white/5 text-tg-text-muted hover:text-white hover:bg-white/10 transition relative cursor-pointer"
+              id="header_alert_bell"
+            >
+              <Bell className="w-4 h-4" />
+              {unreadCount > 0 && (
+                <span className="absolute -top-1.5 -right-1.5 bg-red-500 text-white text-[8px] font-bold px-1.5 py-0.5 rounded-full scale-90 animate-pulse">
+                  {unreadCount}
+                </span>
+              )}
+            </button>
+            
+            <div className="text-right">
+              <span className="text-[9px] uppercase font-bold tracking-wider text-tg-text-muted block">TM Balance</span>
+              <span className="text-base font-extrabold font-display text-amber-400 font-mono tracking-tight flex items-center justify-end gap-1">
+                {userProfile.balanceTM.toLocaleString()}
+                <span className="text-[10px] font-sans font-extrabold text-amber-500/80 uppercase">TM</span>
+              </span>
+            </div>
           </div>
         </div>
 
@@ -180,6 +224,7 @@ export default function App() {
                 db={db} 
                 onUpdateState={handleStateUpdate} 
                 onNavigateToTab={navigateToTab} 
+                showToast={showToast}
               />
             )}
             
@@ -189,6 +234,7 @@ export default function App() {
                 db={db} 
                 onUpdateState={handleStateUpdate} 
                 onNavigateToTab={navigateToTab} 
+                showToast={showToast}
               />
             )}
 
@@ -198,6 +244,7 @@ export default function App() {
                 db={db} 
                 onUpdateState={handleStateUpdate} 
                 onNavigateToTab={navigateToTab} 
+                showToast={showToast}
               />
             )}
 
@@ -207,6 +254,7 @@ export default function App() {
                 db={db} 
                 onUpdateState={handleStateUpdate} 
                 onNavigateToTab={navigateToTab} 
+                showToast={showToast}
               />
             )}
 
@@ -215,6 +263,16 @@ export default function App() {
                 user={userProfile} 
                 db={db} 
                 onUpdateState={handleStateUpdate} 
+                showToast={showToast}
+              />
+            )}
+
+            {activeTab === 'leaderboard' && (
+              <LeaderboardTab 
+                user={userProfile} 
+                db={db} 
+                onUpdateState={handleStateUpdate} 
+                showToast={showToast}
               />
             )}
 
@@ -223,6 +281,7 @@ export default function App() {
                 user={userProfile} 
                 db={db} 
                 onUpdateState={handleStateUpdate} 
+                showToast={showToast}
               />
             )}
           </motion.div>
@@ -237,7 +296,7 @@ export default function App() {
               initial={{ scale: 0.95, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.95, opacity: 0 }}
-              className="w-full max-w-sm glass-panel p-6 rounded-2xl border border-white/5 space-y-4 text-center"
+              className="w-full max-w-sm glass-panel p-6 rounded-2xl border border-white/5 space-y-4 text-center animate-pulse-slow"
             >
               <div className="w-12 h-12 bg-amber-500/10 text-amber-400 rounded-full flex items-center justify-center mx-auto border border-amber-500/25 animate-bounce">
                 <Lock className="w-5 h-5" />
@@ -253,13 +312,13 @@ export default function App() {
               {/* Progress summary inside blocker modal */}
               <div className="p-3 bg-tg-dark/50 rounded-xl text-xs flex justify-between items-center border border-white/5">
                 <span className="text-tg-text-muted">Mandatory Tasks:</span>
-                <span className="font-bold text-amber-400 font-mono">{completedMandatoryCount} / {totalMandatoryCount} Done</span>
+                <span className="font-bold text-amber-400 font-mono">{completedMandatoryCount} / {Math.min(db.settings.mandatoryTaskCount ?? totalMandatoryCount, totalMandatoryCount)} Done</span>
               </div>
 
               <div className="flex gap-2.5 pt-1.5">
                 <button
                   onClick={() => setShowLockedModal(false)}
-                  className="w-full bg-tg-blue hover:bg-tg-blue-light text-white text-xs font-semibold py-2.5 rounded-xl transition"
+                  className="w-full bg-tg-blue hover:bg-tg-blue-light text-white text-xs font-semibold py-2.5 rounded-xl transition cursor-pointer"
                 >
                   Complete Mandatory Tasks
                 </button>
@@ -271,8 +330,8 @@ export default function App() {
 
       {/* Frozen or Banned Screen Blockers */}
       {(userProfile.isFrozen || userProfile.isBanned) && (
-        <div className="fixed inset-0 z-50 bg-tg-dark flex flex-col justify-center items-center p-6 text-center">
-          <div className="w-full max-w-sm glass-panel p-6 rounded-2xl border border-red-500/10 space-y-4 glow-blue">
+        <div className="fixed inset-0 z-50 bg-[#060913]/95 backdrop-blur-md flex flex-col justify-center items-center p-6 text-center">
+          <div className="w-full max-w-sm glass-panel p-6 rounded-2xl border border-red-500/20 space-y-4 glow-blue">
             <div className="w-12 h-12 bg-red-500/10 text-red-400 rounded-full flex items-center justify-center mx-auto border border-red-500/20">
               <AlertTriangle className="w-6 h-6" />
             </div>
@@ -300,13 +359,14 @@ export default function App() {
       )}
 
       {/* Sticky Native Telegram-like Bottom Navigation Bar */}
-      <nav className="fixed bottom-0 inset-x-0 bg-tg-surface border-t border-white/5 py-2 px-2 z-40 max-w-md mx-auto flex justify-around items-center">
+      <nav className="fixed bottom-4 inset-x-4 glass-panel border border-white/10 py-2 px-1 z-40 max-w-md mx-auto flex justify-around items-center rounded-2xl shadow-2xl shadow-black/70 bg-tg-surface/90 backdrop-blur-xl">
         {[
           { id: 'tasks', label: 'Tasks', icon: CheckSquare },
           { id: 'dashboard', label: 'Staking', icon: BarChart2, lockable: true },
           { id: 'deposit', label: 'Deposit', icon: ArrowDownLeft, lockable: true },
           { id: 'withdraw', label: 'Withdraw', icon: ArrowUpRight, lockable: true },
           { id: 'profile', label: 'Referral', icon: User, lockable: true },
+          { id: 'leaderboard', label: 'Leaderboard', icon: Trophy, lockable: true },
           { id: 'support', label: 'Support', icon: HelpCircle, lockable: true }
         ].map((tab) => {
           const Icon = tab.icon;
@@ -317,36 +377,101 @@ export default function App() {
             <button
               key={tab.id}
               onClick={() => navigateToTab(tab.id)}
-              className="flex flex-col items-center gap-1 py-1 px-2.5 relative transition duration-150 focus:outline-none shrink-0"
+              className="flex flex-col items-center gap-1 py-1 px-2 relative transition-all duration-200 focus:outline-none shrink-0 cursor-pointer group"
             >
               <div className="relative">
-                <Icon className={`w-5 h-5 transition-colors ${
+                <Icon className={`w-5 h-5 transition-all duration-200 transform group-hover:scale-105 ${
                   isSelected 
-                    ? 'text-tg-blue' 
+                    ? 'text-tg-blue filter drop-shadow-[0_0_8px_rgba(59,130,246,0.5)]' 
                     : isLocked 
-                      ? 'text-tg-text-muted opacity-40' 
-                      : 'text-tg-text-muted'
+                      ? 'text-tg-text-muted opacity-35' 
+                      : 'text-tg-text-muted group-hover:text-white'
                 }`} />
                 {isLocked && (
-                  <div className="absolute -top-1 -right-1.5 p-0.5 bg-amber-400 text-tg-dark rounded-full">
+                  <div className="absolute -top-1.5 -right-1.5 p-0.5 bg-amber-500 text-tg-dark rounded-full border border-tg-dark">
                     <Lock className="w-1.5 h-1.5" />
                   </div>
                 )}
               </div>
               
-              <span className={`text-[10px] font-semibold transition-colors ${
+              <span className={`text-[10px] font-bold tracking-tight transition-colors ${
                 isSelected 
                   ? 'text-tg-blue' 
                   : isLocked 
-                    ? 'text-tg-text-muted opacity-40' 
-                    : 'text-tg-text-muted'
+                    ? 'text-tg-text-muted opacity-35' 
+                    : 'text-tg-text-muted group-hover:text-white'
               }`}>
                 {tab.label}
               </span>
+
+              {/* Active navigation dot indicator */}
+              {isSelected && (
+                <div className="absolute -bottom-1 w-1 h-1 bg-tg-blue rounded-full glow-blue" />
+              )}
             </button>
           );
         })}
       </nav>
+
+      {/* Floating native-like dynamic Toast alerts */}
+      <div className="fixed top-4 inset-x-4 z-[100] flex flex-col gap-2 pointer-events-none max-w-sm mx-auto">
+        <AnimatePresence>
+          {toasts.map((toast) => (
+            <motion.div
+              key={toast.id}
+              initial={{ opacity: 0, y: -20, scale: 0.9 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.85, transition: { duration: 0.2 } }}
+              className={`p-3 rounded-xl border shadow-xl flex items-center gap-2.5 pointer-events-auto backdrop-blur-md bg-tg-surface/90 ${
+                toast.type === 'success' 
+                  ? 'border-emerald-500/30 shadow-emerald-950/20' 
+                  : toast.type === 'error'
+                    ? 'border-red-500/30 shadow-red-950/20'
+                    : toast.type === 'pending'
+                      ? 'border-tg-blue/30 shadow-tg-blue/20'
+                      : 'border-white/10 shadow-black/40'
+              }`}
+            >
+              {toast.type === 'success' && <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 animate-bounce" />}
+              {toast.type === 'error' && <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />}
+              {toast.type === 'pending' && <motion.div animate={{ rotate: 360 }} transition={{ repeat: Infinity, ease: 'linear', duration: 1 }} className="shrink-0"><RefreshCw className="w-4 h-4 text-tg-blue-light animate-spin" /></motion.div>}
+              {toast.type === 'info' && <Info className="w-4 h-4 text-tg-blue-light shrink-0" />}
+
+              <div className="text-xs font-semibold text-white leading-snug flex-1 pr-1">
+                {toast.message}
+              </div>
+            </motion.div>
+          ))}
+        </AnimatePresence>
+      </div>
+
+      {/* Slide-in Notification Drawer overlay */}
+      <AnimatePresence>
+        {showNotifCenter && (
+          <NotificationCenter
+            user={userProfile}
+            db={db}
+            onUpdateState={handleStateUpdate}
+            onClose={() => setShowNotifCenter(false)}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* Full-screen mandatory tasks popup blocker */}
+      <AnimatePresence>
+        {!userProfile.mandatoryCompleted && mandatoryTasks.length > 0 && (
+          <MandatoryTasksPopup
+            user={userProfile}
+            db={db}
+            onUpdateState={handleStateUpdate}
+            onClose={() => {
+              // Already saved and updated via handleStateUpdate inside MandatoryTasksPopup
+            }}
+            showToast={showToast}
+          />
+        )}
+      </AnimatePresence>
+
     </div>
   );
 }
