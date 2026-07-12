@@ -41,105 +41,9 @@ const DEFAULT_WITHDRAWAL_RULES: WithdrawalRule[] = [
   }
 ];
 
-const DEFAULT_TASKS: Task[] = [
-  {
-    id: "task_1",
-    title: "Join Official Telegram Channel",
-    description: "Join the official TM Digital Telegram Channel to get latest updates and code drops.",
-    type: "TelegramChannel",
-    rewardTM: 200,
-    link: "https://t.me/tm_digital_channel_mock",
-    isMandatory: true,
-    displayOrder: 1,
-    isEnabled: true,
-    requiresVerification: true
-  },
-  {
-    id: "task_2",
-    title: "Join Official Chat Group",
-    description: "Join our official Telegram discussion group and discuss stakings with other users.",
-    type: "TelegramGroup",
-    rewardTM: 200,
-    link: "https://t.me/tm_digital_group_mock",
-    isMandatory: true,
-    displayOrder: 2,
-    isEnabled: true,
-    requiresVerification: true
-  },
-  {
-    id: "task_3",
-    title: "Start TM Verification Bot",
-    description: "Click start on our official telegram bot to enable immediate notifications and anti-fraud filters.",
-    type: "TelegramBot",
-    rewardTM: 100,
-    link: "https://t.me/tm_digital_verification_bot_mock",
-    isMandatory: true,
-    displayOrder: 3,
-    isEnabled: true,
-    requiresVerification: true
-  },
-  {
-    id: "task_4",
-    title: "Claim Daily Telegram Check-in",
-    description: "Claim your daily check-in reward simply by tapping the button.",
-    type: "DailyCheckIn",
-    rewardTM: 50,
-    link: "#",
-    isMandatory: false,
-    displayOrder: 4,
-    isEnabled: true,
-    requiresVerification: false
-  },
-  {
-    id: "task_5",
-    title: "Invite 3 Friends via Telegram",
-    description: "Share your automatic referral link with your contacts and invite 3 active users.",
-    type: "Referral",
-    rewardTM: 300,
-    link: "#",
-    isMandatory: false,
-    displayOrder: 5,
-    isEnabled: true,
-    requiresVerification: true
-  },
-  {
-    id: "task_6",
-    title: "Follow TM Digital on Twitter/X",
-    description: "Stay in touch on our primary announcement handle.",
-    type: "ExternalLink",
-    rewardTM: 150,
-    link: "https://twitter.com/tm_digital_mock",
-    isMandatory: false,
-    displayOrder: 6,
-    isEnabled: true,
-    requiresVerification: false
-  }
-];
+const DEFAULT_TASKS: Task[] = [];
 
-const DEFAULT_CHANNELS: Channel[] = [
-  {
-    id: "chan_1",
-    name: "TM Digital Announcements",
-    username: "@tm_digital_announcements",
-    inviteLink: "https://t.me/tm_digital_channel_mock",
-    rewardTM: 200,
-    isEnabled: true,
-    displayOrder: 1,
-    isMandatory: true,
-    requiresVerification: true
-  },
-  {
-    id: "chan_2",
-    name: "TM Digital Community Chat",
-    username: "@tm_digital_chat",
-    inviteLink: "https://t.me/tm_digital_group_mock",
-    rewardTM: 200,
-    isEnabled: true,
-    displayOrder: 2,
-    isMandatory: true,
-    requiresVerification: true
-  }
-];
+const DEFAULT_CHANNELS: Channel[] = [];
 
 const DEFAULT_USERS: UserProfile[] = [
   {
@@ -500,6 +404,24 @@ export const getDB = (): AppDatabase => {
       }
       if (!db.transfers) {
         db.transfers = [];
+      }
+
+      // Automatically strip out the default mock tasks/channels so the user gets a clean panel
+      const defaultMockTaskIds = ["task_1", "task_2", "task_3", "task_4", "task_5", "task_6"];
+      const defaultMockChannelIds = ["chan_1", "chan_2"];
+      let didMigrate = false;
+
+      if (db.tasks && db.tasks.some((t: any) => defaultMockTaskIds.includes(t.id))) {
+        db.tasks = db.tasks.filter((t: any) => !defaultMockTaskIds.includes(t.id));
+        didMigrate = true;
+      }
+      if (db.channels && db.channels.some((c: any) => defaultMockChannelIds.includes(c.id))) {
+        db.channels = db.channels.filter((c: any) => !defaultMockChannelIds.includes(c.id));
+        didMigrate = true;
+      }
+
+      if (didMigrate) {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(db));
       }
       
       // Ensure every single user has a permanent unique numeric UID starting at 117301

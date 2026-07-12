@@ -43,16 +43,16 @@ export const DepositTab: React.FC<DepositTabProps> = ({
   // Staking plans / Return Tiers matching the screenshot
   const plans = [
     { id: 1, limit: 0, returnRate: 11.0, label: "Amount >= 0 TM ($0+ USDT)" },
-    { id: 2, limit: 20000, returnRate: 12.0, label: "Amount >= 20,000 TM ($20+ USDT)" },
-    { id: 3, limit: 300000, returnRate: 13.0, label: "Amount >= 300,000 TM ($300+ USDT)", isPopular: true },
-    { id: 4, limit: 3000000, returnRate: 14.0, label: "Amount >= 3,000,000+ TM ($3,000+ USDT)" },
+    { id: 2, limit: 10000, returnRate: 12.0, label: "Amount >= 10,000 TM ($10+ USDT)" },
+    { id: 3, limit: 50000, returnRate: 13.0, label: "Amount >= 50,000 TM ($50+ USDT)", isPopular: true },
+    { id: 4, limit: 100000, returnRate: 14.0, label: "Amount >= 100,000+ TM ($100+ USDT)" },
   ];
 
   // Determine active plan tier based on input amount
   const getActivePlanId = (tmVal: number) => {
-    if (tmVal >= 3000000) return 4;
-    if (tmVal >= 300000) return 3;
-    if (tmVal >= 20000) return 2;
+    if (tmVal >= 100000) return 4;
+    if (tmVal >= 50000) return 3;
+    if (tmVal >= 10000) return 2;
     return 1;
   };
 

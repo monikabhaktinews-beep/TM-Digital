@@ -300,7 +300,7 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({
         <div className="flex items-center justify-between">
           <div className="space-y-1">
             <div className="flex items-center gap-1.5">
-              <span className="text-xs font-bold text-slate-500">Total TM Earned</span>
+              <span className="text-xs font-bold text-slate-500">Withdrawable Balance</span>
               <button 
                 onClick={handleScrollToLogs}
                 className="inline-flex items-center gap-1 text-[10px] text-slate-400 hover:text-slate-600 font-bold bg-slate-100 px-2 py-0.5 rounded-full cursor-pointer transition-colors"
@@ -312,12 +312,10 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({
             </div>
             
             {/* Massive numbers */}
-            <div className="text-3xl font-black font-display text-slate-800 tracking-tight leading-none mt-1">
-              {totalTMEarned.toLocaleString()} <span className="text-xs font-extrabold text-slate-500 uppercase tracking-wider">TM</span>
+            <div className="text-3xl font-black font-display text-slate-800 tracking-tight leading-none mt-2 flex items-baseline gap-1">
+              <span className="text-lg font-bold text-slate-500 mr-0.5">$</span>
+              {(user.balanceUSDT || 0).toFixed(3)} <span className="text-xs font-extrabold text-slate-500 uppercase tracking-wider ml-0.5">USDT</span>
             </div>
-            <p className="text-[10px] text-slate-400 font-semibold pt-0.5">
-              ≈ ${(user.balanceUSDT || 0).toFixed(3)} USDT
-            </p>
           </div>
 
           {/* Withdraw button */}
@@ -442,7 +440,7 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({
               <span>Weekend Special</span>
             </span>
             <h3 className="font-extrabold text-white text-sm mt-2 max-w-[190px] leading-snug">
-              Earn up to <span className="text-amber-400">5.5% ROI</span> in just 10 Days
+              Earn up to <span className="text-amber-400">11% ROI</span> in just 10 Days
             </h3>
             <p className="text-[9px] text-tg-text-muted mt-1">Staking starts automatically on deposit</p>
           </div>
