@@ -13,7 +13,7 @@ import { MandatoryTasksPopup } from './components/MandatoryTasksPopup';
 import { NotificationCenter } from './components/NotificationCenter';
 import { 
   CheckSquare, ArrowDownLeft, ArrowUpRight, User, HelpCircle, Gift,
-  Lock, KeyRound, AlertTriangle, MessageSquare, Bot, Bell, Shield, Info, CheckCircle2, AlertCircle, RefreshCw
+  Lock, KeyRound, AlertTriangle, MessageSquare, Bot, Bell, Shield, Info, CheckCircle2, AlertCircle, RefreshCw, Home
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -232,6 +232,7 @@ export default function App() {
                 user={userProfile} 
                 db={db} 
                 onUpdateState={handleStateUpdate} 
+                onNavigateToTab={navigateToTab}
                 showToast={showToast}
               />
             )}
@@ -350,7 +351,7 @@ export default function App() {
       {/* Sticky Native Telegram-like Bottom Navigation Bar */}
       <nav className="fixed bottom-4 inset-x-4 glass-panel border border-white/10 py-2 px-1 z-40 max-w-md mx-auto flex justify-around items-center rounded-2xl shadow-2xl shadow-black/70 bg-tg-surface/90 backdrop-blur-xl">
         {[
-          { id: 'profile', label: 'Profile', icon: User, lockable: true },
+          { id: 'profile', label: 'Home', icon: Home, lockable: true },
           { id: 'tasks', label: 'Tasks', icon: CheckSquare },
           { id: 'deposit', label: 'Deposit', icon: ArrowDownLeft, lockable: true },
           { id: 'withdraw', label: 'Withdraw', icon: ArrowUpRight, lockable: true },

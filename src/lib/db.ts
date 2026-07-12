@@ -143,7 +143,7 @@ const DEFAULT_CHANNELS: Channel[] = [
 
 const DEFAULT_USERS: UserProfile[] = [
   {
-    uid: 100001,
+    uid: 117301,
     id: "111111111",
     username: "cryptoking",
     firstName: "Sarah",
@@ -163,7 +163,7 @@ const DEFAULT_USERS: UserProfile[] = [
     isBanned: false
   },
   {
-    uid: 100002,
+    uid: 117302,
     id: "222222222",
     username: "tg_rich",
     firstName: "Michael",
@@ -183,7 +183,7 @@ const DEFAULT_USERS: UserProfile[] = [
     isBanned: false
   },
   {
-    uid: 100003,
+    uid: 117303,
     id: "333333333",
     username: "new_joiner",
     firstName: "Dwight",
@@ -203,7 +203,7 @@ const DEFAULT_USERS: UserProfile[] = [
     isBanned: false
   },
   {
-    uid: 100004,
+    uid: 117304,
     id: "444444444",
     username: "frozentg",
     firstName: "Jim",
@@ -223,7 +223,7 @@ const DEFAULT_USERS: UserProfile[] = [
     isBanned: false
   },
   {
-    uid: 100005,
+    uid: 117305,
     id: "555555555",
     username: "banned_user",
     firstName: "Pam",
@@ -435,14 +435,19 @@ export const getDB = (): AppDatabase => {
         db.transfers = [];
       }
       
-      // Ensure every single user has a permanent unique numeric UID starting at 100001
-      let maxUid = 100000;
+      // Ensure every single user has a permanent unique numeric UID starting at 117301
+      let maxUid = 117300;
+      let needsSave = false;
       db.users.forEach((u: UserProfile) => {
+        // Migration: If user's UID is old (less than 117301), shift it to start from 117301
+        if (u.uid && u.uid < 117301) {
+          u.uid = u.uid - 100000 + 117300; // e.g. 100001 -> 117301, 100002 -> 117302, etc.
+          needsSave = true;
+        }
         if (u.uid && u.uid > maxUid) {
           maxUid = u.uid;
         }
       });
-      let needsSave = false;
       db.users.forEach((u: UserProfile) => {
         if (!u.uid) {
           maxUid += 1;
@@ -479,7 +484,7 @@ export const getDB = (): AppDatabase => {
   };
 
   // Generate initial UIDs for default users
-  let startUid = 100001;
+  let startUid = 117301;
   db.users.forEach((u: UserProfile) => {
     u.uid = startUid;
     startUid += 1;
@@ -563,9 +568,9 @@ export const getUserProfile = (tgUser: { id: string; username?: string; firstNam
   let user = db.users.find(u => u.id === tgUser.id);
   
   if (!user) {
-    // Generate permanent unique numeric UID starting at 100001
-    const maxUid = db.users.length > 0 ? Math.max(...db.users.map(u => u.uid || 0)) : 100000;
-    const nextUid = maxUid < 100000 ? 100001 : maxUid + 1;
+    // Generate permanent unique numeric UID starting at 117301
+    const maxUid = db.users.length > 0 ? Math.max(...db.users.map(u => u.uid || 0)) : 117300;
+    const nextUid = maxUid < 117300 ? 117301 : maxUid + 1;
 
     user = {
       id: tgUser.id,
