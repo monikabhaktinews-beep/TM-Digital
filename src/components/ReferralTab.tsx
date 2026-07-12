@@ -18,7 +18,7 @@ export const ReferralTab: React.FC<ReferralTabProps> = ({
   const [copiedLink, setCopiedLink] = useState<boolean>(false);
 
   // Generate Referral link using the user's permanent UID
-  const referralLink = `https://t.me/TMDigitalEarningBot/app?startapp=ref_${user.uid}`;
+  const referralLink = `https://t.me/TM_DigitalBot/app?startapp=ref_${user.uid}`;
 
   const handleCopyLink = () => {
     navigator.clipboard.writeText(referralLink);
