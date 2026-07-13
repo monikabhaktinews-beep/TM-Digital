@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Task, UserProfile, AppDatabase } from '../types';
-import { completeUserTask, submitUserTask } from '../lib/db';
+import { verifyTaskOnServer, completeUserTask } from '../lib/db';
 import { CheckCircle2, Lock, Unlock, ArrowUpRight, HelpCircle, AlertCircle, Loader2, Upload, X, Image as ImageIcon, FileText } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -23,13 +23,6 @@ export const TasksTab: React.FC<TasksTabProps> = ({
   const [clickedTasks, setClickedTasks] = useState<string[]>([]);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
-  // New Verification State
-  const [selectedTaskForVerify, setSelectedTaskForVerify] = useState<Task | null>(null);
-  const [screenshotBase64, setScreenshotBase64] = useState<string>('');
-  const [confirmationCode, setConfirmationCode] = useState<string>('');
-  const [isSubmittingTask, setIsSubmittingTask] = useState<boolean>(false);
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
-
   // Filter tasks that are enabled
   const enabledTasks = db.tasks.filter(t => t.isEnabled);
   const mandatoryTasks = enabledTasks.filter(t => t.isMandatory);
@@ -47,10 +40,6 @@ export const TasksTab: React.FC<TasksTabProps> = ({
   const completedTotalCount = enabledTasks.filter(t => completedTaskIds.includes(t.id)).length;
   const totalCount = enabledTasks.length;
 
-  const getSubmissionForTask = (taskId: string) => {
-    return (db.taskSubmissions || []).find(s => s.userId === user.id && s.taskId === taskId);
-  };
-
   const handleJoinClick = (task: Task) => {
     // Record that they clicked the task link
     if (!clickedTasks.includes(task.id)) {
@@ -62,69 +51,36 @@ export const TasksTab: React.FC<TasksTabProps> = ({
     }
   };
 
-  const handleVerify = (task: Task) => {
+  const handleVerify = async (task: Task) => {
     if (!clickedTasks.includes(task.id) && task.requiresVerification) {
-      alert("Please join or click the 'Join'/'Open' button first to initiate verification.");
+      if (showToast) {
+        showToast("Please join or click the 'Join'/'Open' button first to initiate verification.", 'error');
+      } else {
+        alert("Please join or click the 'Join'/'Open' button first to initiate verification.");
+      }
       return;
     }
     
-    // Open verification submission form
-    setSelectedTaskForVerify(task);
-    setScreenshotBase64('');
-    setConfirmationCode('');
-    setErrorMsg(null);
-  };
-
-  const handleScreenshotChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setErrorMsg(null);
-    const file = e.target.files?.[0];
-    if (file) {
-      if (file.size > 3 * 1024 * 1024) {
-        setErrorMsg("Screenshot size must be less than 3MB.");
-        return;
+    setVerifyingTaskId(task.id);
+    if (showToast) {
+      showToast(`Verifying completion of ${task.title}...`, 'pending');
+    }
+    
+    const result = await verifyTaskOnServer(user.id, task.id, clickedTasks.includes(task.id));
+    setVerifyingTaskId(null);
+    
+    if (result.success) {
+      onUpdateState(result.user, result.db);
+      if (showToast) {
+        showToast(`Successfully verified: ${task.title}! +${task.rewardTM} TM`, 'success');
       }
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setScreenshotBase64(reader.result as string);
-      };
-      reader.onerror = () => {
-        setErrorMsg("Failed to read image file.");
-      };
-      reader.readAsDataURL(file);
-    }
-  };
-
-  const handleSubmitProof = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedTaskForVerify) return;
-
-    if (!screenshotBase64 && !confirmationCode.trim()) {
-      setErrorMsg("Please provide either a screenshot or a confirmation code/username as proof.");
-      return;
-    }
-
-    setIsSubmittingTask(true);
-    setErrorMsg(null);
-
-    // Simulate small network delay
-    setTimeout(() => {
-      const result = submitUserTask(user.id, selectedTaskForVerify.id, screenshotBase64, confirmationCode.trim());
-      setIsSubmittingTask(false);
-      if (result.success) {
-        onUpdateState(result.user, result.db);
-        if (showToast) {
-          showToast(`Task verification proof submitted successfully! Admin will verify soon.`, 'success');
-        } else {
-          setSuccessMsg(`Proof submitted! Admin will verify soon.`);
-          setTimeout(() => setSuccessMsg(null), 4000);
-        }
-        setSelectedTaskForVerify(null);
-        setScreenshotBase64('');
-        setConfirmationCode('');
+    } else {
+      if (showToast) {
+        showToast(result.message, 'error');
       } else {
-        setErrorMsg(result.message);
+        alert(result.message);
       }
-    }, 1000);
+    }
   };
 
   // Helper to categorize social media tasks
@@ -273,58 +229,42 @@ export const TasksTab: React.FC<TasksTabProps> = ({
                           <CheckCircle2 className="w-3.5 h-3.5" />
                           <span>Done</span>
                         </span>
-                      ) : (() => {
-                        const submission = getSubmissionForTask(task.id);
-                        if (submission?.status === 'Pending') {
-                          return (
-                            <span className="flex items-center gap-1 text-amber-400 font-bold text-[11px] bg-amber-500/10 px-2.5 py-1.5 rounded-lg border border-amber-500/20">
-                              <Loader2 className="w-3 h-3 animate-spin shrink-0" />
-                              <span>Pending</span>
-                            </span>
-                          );
-                        }
-                        if (submission?.status === 'Rejected') {
-                          return (
-                            <div className="flex flex-col gap-1.5 items-stretch w-20">
-                              <span className="text-red-400 font-bold text-[10px] bg-red-500/10 px-1 py-1 rounded-lg text-center border border-red-500/20">
-                                Rejected
-                              </span>
-                              <button
-                                onClick={() => handleVerify(task)}
-                                className="text-[11px] font-semibold py-1 px-2 rounded-lg text-center bg-amber-500 hover:bg-amber-600 text-tg-dark transition font-display"
-                              >
-                                Retry
-                              </button>
-                            </div>
-                          );
-                        }
-                        return (
-                          <div className="flex flex-col gap-1.5 items-stretch w-20">
-                            <button
-                              onClick={() => handleJoinClick(task)}
-                              className={`text-[11px] font-semibold py-1.5 px-2 rounded-lg text-center transition flex items-center justify-center gap-0.5 ${
-                                isClicked 
-                                  ? 'bg-tg-surface-light text-tg-text-muted border border-white/5' 
-                                  : 'bg-tg-blue hover:bg-tg-blue-light text-white font-display'
-                              }`}
-                            >
-                              <span>Join</span>
-                              <ArrowUpRight className="w-3 h-3" />
-                            </button>
-                            
-                            <button
-                              onClick={() => handleVerify(task)}
-                              className={`text-[11px] font-semibold py-1.5 px-2 rounded-lg text-center transition ${
-                                isClicked
-                                  ? 'bg-amber-500 hover:bg-amber-600 text-tg-dark'
+                      ) : (
+                        <div className="flex flex-col gap-1.5 items-stretch w-20">
+                          <button
+                            onClick={() => handleJoinClick(task)}
+                            className={`text-[11px] font-semibold py-1.5 px-2 rounded-lg text-center transition flex items-center justify-center gap-0.5 ${
+                              isClicked 
+                                ? 'bg-tg-surface-light text-tg-text-muted border border-white/5' 
+                                : 'bg-tg-blue hover:bg-tg-blue-light text-white font-display'
+                            }`}
+                          >
+                            <span>Join</span>
+                            <ArrowUpRight className="w-3 h-3" />
+                          </button>
+                          
+                          <button
+                            onClick={() => handleVerify(task)}
+                            disabled={verifyingTaskId === task.id}
+                            className={`text-[11px] font-semibold py-1.5 px-2 rounded-lg text-center transition mt-1.5 flex items-center justify-center gap-1 ${
+                              verifyingTaskId === task.id
+                                ? 'bg-tg-surface-light text-tg-text-muted cursor-wait'
+                                : isClicked
+                                  ? 'bg-amber-500 hover:bg-amber-600 text-tg-dark font-semibold'
                                   : 'bg-tg-surface-light text-tg-text-muted cursor-not-allowed border border-white/5'
-                              }`}
-                            >
-                              Verify
-                            </button>
-                          </div>
-                        );
-                      })()}
+                            }`}
+                          >
+                            {verifyingTaskId === task.id ? (
+                              <>
+                                <Loader2 className="w-3 h-3 animate-spin shrink-0" />
+                                <span>Verifying...</span>
+                              </>
+                            ) : (
+                              <span>Verify</span>
+                            )}
+                          </button>
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -431,65 +371,26 @@ export const TasksTab: React.FC<TasksTabProps> = ({
                                     <ArrowUpRight className="w-3 h-3" />
                                   </button>
                                   
-                                  {task.requiresVerification ? (() => {
-                                    const submission = getSubmissionForTask(task.id);
-                                    if (submission?.status === 'Pending') {
-                                      return (
-                                        <span className="flex items-center justify-center gap-1 text-amber-400 font-bold text-[11px] bg-amber-500/10 px-2 py-1.5 rounded-lg border border-amber-500/20 w-full mt-1.5">
-                                          <Loader2 className="w-3 h-3 animate-spin shrink-0" />
-                                          <span>Pending</span>
-                                        </span>
-                                      );
-                                    }
-                                    if (submission?.status === 'Rejected') {
-                                      return (
-                                        <div className="flex flex-col gap-1.5 items-stretch mt-1.5">
-                                          <span className="text-red-400 font-bold text-[10px] bg-red-500/10 px-1 py-1 rounded-lg text-center border border-red-500/20">
-                                            Rejected
-                                          </span>
-                                          <button
-                                            onClick={() => handleVerify(task)}
-                                            className="text-[11px] font-semibold py-1 px-2 rounded-lg text-center bg-amber-500 hover:bg-amber-600 text-tg-dark transition font-display"
-                                          >
-                                            Retry
-                                          </button>
-                                        </div>
-                                      );
-                                    }
-                                    return (
-                                      <button
-                                        onClick={() => handleVerify(task)}
-                                        className={`text-[11px] font-semibold py-1.5 px-2 rounded-lg text-center transition mt-1.5 ${
-                                          isClicked
-                                            ? 'bg-amber-500 hover:bg-amber-600 text-tg-dark'
-                                            : 'bg-tg-surface-light text-tg-text-muted cursor-not-allowed border border-white/5'
-                                        }`}
-                                      >
-                                        Verify
-                                      </button>
-                                    );
-                                  })() : (
-                                    <button
-                                      onClick={() => {
-                                        const result = completeUserTask(user.id, task.id);
-                                        if (result.success) {
-                                          onUpdateState(result.user, result.db);
-                                          if (showToast) {
-                                            showToast(`Task completed! Earned +${task.rewardTM} TM.`, 'success');
-                                          } else {
-                                            setSuccessMsg(`Task completed! +${task.rewardTM} TM.`);
-                                            setTimeout(() => setSuccessMsg(null), 3000);
-                                          }
-                                        } else {
-                                          if (showToast) showToast(result.message, 'error');
-                                          else alert(result.message);
-                                        }
-                                      }}
-                                      className="bg-emerald-500 hover:bg-emerald-600 text-tg-dark text-[11px] font-semibold py-1.5 px-2 rounded-lg text-center transition font-display mt-1.5"
-                                    >
-                                      Claim
-                                    </button>
-                                  )}
+                                  <button
+                                    onClick={() => handleVerify(task)}
+                                    disabled={verifyingTaskId === task.id}
+                                    className={`text-[11px] font-semibold py-1.5 px-2 rounded-lg text-center transition mt-1.5 flex items-center justify-center gap-1 ${
+                                      verifyingTaskId === task.id
+                                        ? 'bg-tg-surface-light text-tg-text-muted cursor-wait'
+                                        : isClicked
+                                          ? 'bg-amber-500 hover:bg-amber-600 text-tg-dark font-semibold'
+                                          : 'bg-tg-surface-light text-tg-text-muted cursor-not-allowed border border-white/5'
+                                    }`}
+                                  >
+                                    {verifyingTaskId === task.id ? (
+                                      <>
+                                        <Loader2 className="w-3 h-3 animate-spin shrink-0" />
+                                        <span>Verifying...</span>
+                                      </>
+                                    ) : (
+                                      <span>Verify</span>
+                                    )}
+                                  </button>
                                 </>
                               )}
                             </div>
@@ -559,65 +460,26 @@ export const TasksTab: React.FC<TasksTabProps> = ({
                                 <ArrowUpRight className="w-3 h-3" />
                               </button>
                               
-                              {task.requiresVerification ? (() => {
-                                const submission = getSubmissionForTask(task.id);
-                                if (submission?.status === 'Pending') {
-                                  return (
-                                    <span className="flex items-center justify-center gap-1 text-amber-400 font-bold text-[11px] bg-amber-500/10 px-2 py-1.5 rounded-lg border border-amber-500/20 w-full mt-1.5">
-                                      <Loader2 className="w-3 h-3 animate-spin shrink-0" />
-                                      <span>Pending</span>
-                                    </span>
-                                  );
-                                }
-                                if (submission?.status === 'Rejected') {
-                                  return (
-                                    <div className="flex flex-col gap-1.5 items-stretch mt-1.5">
-                                      <span className="text-red-400 font-bold text-[10px] bg-red-500/10 px-1 py-1 rounded-lg text-center border border-red-500/20">
-                                        Rejected
-                                      </span>
-                                      <button
-                                        onClick={() => handleVerify(task)}
-                                        className="text-[11px] font-semibold py-1 px-2 rounded-lg text-center bg-amber-500 hover:bg-amber-600 text-tg-dark transition font-display"
-                                      >
-                                        Retry
-                                      </button>
-                                    </div>
-                                  );
-                                }
-                                return (
-                                  <button
-                                    onClick={() => handleVerify(task)}
-                                    className={`text-[11px] font-semibold py-1.5 px-2 rounded-lg text-center transition mt-1.5 ${
-                                      isClicked
-                                        ? 'bg-amber-500 hover:bg-amber-600 text-tg-dark'
-                                        : 'bg-tg-surface-light text-tg-text-muted cursor-not-allowed border border-white/5'
-                                    }`}
-                                  >
-                                    Verify
-                                  </button>
-                                );
-                              })() : (
-                                <button
-                                  onClick={() => {
-                                    const result = completeUserTask(user.id, task.id);
-                                    if (result.success) {
-                                      onUpdateState(result.user, result.db);
-                                      if (showToast) {
-                                        showToast(`Social task completed! Earned +${task.rewardTM} TM.`, 'success');
-                                      } else {
-                                        setSuccessMsg(`Task completed! +${task.rewardTM} TM.`);
-                                        setTimeout(() => setSuccessMsg(null), 3000);
-                                      }
-                                    } else {
-                                      if (showToast) showToast(result.message, 'error');
-                                      else alert(result.message);
-                                    }
-                                  }}
-                                  className="bg-emerald-500 hover:bg-emerald-600 text-tg-dark text-[11px] font-semibold py-1.5 px-2 rounded-lg text-center transition font-display mt-1.5"
-                                >
-                                  Claim
-                                </button>
-                              )}
+                              <button
+                                onClick={() => handleVerify(task)}
+                                disabled={verifyingTaskId === task.id}
+                                className={`text-[11px] font-semibold py-1.5 px-2 rounded-lg text-center transition mt-1.5 flex items-center justify-center gap-1 ${
+                                  verifyingTaskId === task.id
+                                    ? 'bg-tg-surface-light text-tg-text-muted cursor-wait'
+                                    : isClicked
+                                      ? 'bg-amber-500 hover:bg-amber-600 text-tg-dark font-semibold'
+                                      : 'bg-tg-surface-light text-tg-text-muted cursor-not-allowed border border-white/5'
+                                }`}
+                              >
+                                {verifyingTaskId === task.id ? (
+                                  <>
+                                    <Loader2 className="w-3 h-3 animate-spin shrink-0" />
+                                    <span>Verifying...</span>
+                                  </>
+                                ) : (
+                                  <span>Verify</span>
+                                )}
+                              </button>
                             </div>
                           )}
                         </div>
@@ -630,132 +492,6 @@ export const TasksTab: React.FC<TasksTabProps> = ({
           )}
         </>
       )}
-
-      {/* Verification submission modal */}
-      <AnimatePresence>
-        {selectedTaskForVerify && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-tg-dark/95 z-50 flex items-center justify-center p-4 overflow-y-auto backdrop-blur-sm"
-          >
-            <motion.div
-              initial={{ scale: 0.9, y: 15 }}
-              animate={{ scale: 1, y: 0 }}
-              exit={{ scale: 0.9, y: 15 }}
-              className="glass-panel w-full max-w-md p-5 rounded-2xl border border-white/10 space-y-4 bg-tg-dark/95 shadow-2xl relative"
-            >
-              <button
-                type="button"
-                onClick={() => setSelectedTaskForVerify(null)}
-                className="absolute top-4 right-4 text-tg-text-muted hover:text-white transition cursor-pointer"
-              >
-                <X className="w-5 h-5" />
-              </button>
-
-              <div className="space-y-1.5 pr-6">
-                <span className="text-[10px] text-amber-400 font-bold uppercase tracking-wider block">Submit Task Proof</span>
-                <h3 className="text-sm font-bold text-white font-display leading-tight">{selectedTaskForVerify.title}</h3>
-                <p className="text-[11px] text-tg-text-muted leading-relaxed">{selectedTaskForVerify.description}</p>
-                
-                <div className="flex items-center gap-2 pt-1">
-                  <span className="text-[11px] font-mono font-bold text-tg-blue bg-tg-blue/10 px-2.5 py-0.5 rounded">
-                    +{selectedTaskForVerify.rewardTM} TM Reward
-                  </span>
-                  <span className="text-[10px] text-tg-text-muted">
-                    ≈ ${(selectedTaskForVerify.rewardTM / db.settings.conversionRate).toFixed(2)} USDT
-                  </span>
-                </div>
-              </div>
-
-              <form onSubmit={handleSubmitProof} className="space-y-4 pt-2">
-                {errorMsg && (
-                  <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-3 text-xs text-red-400 flex items-start gap-2.5">
-                    <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-                    <span>{errorMsg}</span>
-                  </div>
-                )}
-
-                <div className="space-y-1.5">
-                  <label className="text-[10px] text-tg-text-muted uppercase tracking-wider font-bold block flex items-center gap-1">
-                    <ImageIcon className="w-3.5 h-3.5 text-tg-blue" />
-                    <span>Upload Screenshot Proof</span>
-                  </label>
-                  
-                  {!screenshotBase64 ? (
-                    <label className="border border-dashed border-white/10 hover:border-tg-blue/40 rounded-xl p-5 flex flex-col items-center justify-center gap-2 cursor-pointer transition bg-tg-dark/40 group">
-                      <input 
-                        type="file" 
-                        accept="image/*" 
-                        onChange={handleScreenshotChange}
-                        className="hidden" 
-                      />
-                      <Upload className="w-6 h-6 text-tg-text-muted group-hover:text-tg-blue transition" />
-                      <span className="text-xs text-white group-hover:text-tg-blue transition font-semibold">Choose screenshot image</span>
-                      <span className="text-[10px] text-tg-text-muted">PNG, JPG, JPEG up to 3MB</span>
-                    </label>
-                  ) : (
-                    <div className="relative rounded-xl overflow-hidden border border-white/10 bg-tg-dark/40 p-1.5">
-                      <img 
-                        src={screenshotBase64} 
-                        alt="Screenshot proof preview" 
-                        className="w-full max-h-48 object-contain rounded-lg bg-black"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => setScreenshotBase64('')}
-                        className="absolute top-3 right-3 bg-red-600 hover:bg-red-700 text-white p-1 rounded-full shadow transition"
-                      >
-                        <X className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  )}
-                </div>
-
-                <div className="space-y-1.5">
-                  <label className="text-[10px] text-tg-text-muted uppercase tracking-wider font-bold block flex items-center gap-1">
-                    <FileText className="w-3.5 h-3.5 text-tg-blue" />
-                    <span>Confirmation Code / Username</span>
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="e.g. @your_telegram_username or verification code"
-                    value={confirmationCode}
-                    onChange={(e) => setConfirmationCode(e.target.value)}
-                    className="w-full bg-tg-dark/50 border border-white/5 focus:border-tg-blue/40 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none transition"
-                  />
-                  <p className="text-[9px] text-tg-text-muted">Enter any text proof or confirmation details that help admins verify your completion.</p>
-                </div>
-
-                <div className="flex gap-2.5 pt-2">
-                  <button
-                    type="button"
-                    onClick={() => setSelectedTaskForVerify(null)}
-                    className="flex-1 border border-white/5 bg-tg-surface-light text-white text-xs font-semibold py-3 rounded-xl hover:bg-white/5 transition"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={isSubmittingTask}
-                    className="flex-1 bg-tg-blue hover:bg-tg-blue-light text-white text-xs font-semibold py-3 rounded-xl transition flex items-center justify-center gap-1.5 disabled:opacity-50"
-                  >
-                    {isSubmittingTask ? (
-                      <>
-                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                        <span>Submitting...</span>
-                      </>
-                    ) : (
-                      <span>Submit Proof</span>
-                    )}
-                  </button>
-                </div>
-              </form>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
     </div>
   );
 };

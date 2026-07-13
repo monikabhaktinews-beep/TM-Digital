@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Task, UserProfile, AppDatabase } from '../types';
-import { completeUserTask, completeUserOnboarding } from '../lib/db';
+import { verifyTaskOnServer, completeOnboardingOnServer } from '../lib/db';
 import { CheckCircle2, Lock, ArrowRight, ExternalLink, Loader2, RefreshCw, AlertCircle, Sparkles } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -23,19 +23,21 @@ export const MandatoryTasksPopup: React.FC<MandatoryTasksPopupProps> = ({
   const [clickedTasks, setClickedTasks] = useState<string[]>([]);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  // Filter currently enabled mandatory tasks
+  // Define the exact 3 mandatory tasks we are looking for
+  const requiredTaskIds = ["mandatory_channel_1", "mandatory_channel_2", "mandatory_channel_3"];
+  
   const enabledTasks = db.tasks.filter(t => t.isEnabled);
-  const mandatoryTasks = enabledTasks.filter(t => t.isMandatory);
+  const mandatoryTasks = enabledTasks.filter(t => requiredTaskIds.includes(t.id));
   
   // User's completed tasks
   const completedTaskIds = db.completedTasks[user.id] || [];
   
-  // Progress calculations
-  const completedMandatoryCount = mandatoryTasks.filter(t => completedTaskIds.includes(t.id)).length;
-  const requiredCount = db.settings.mandatoryTaskCount ?? mandatoryTasks.length;
-  
-  // Fully completed all required mandatory tasks?
-  const isUnlocked = completedMandatoryCount >= Math.min(requiredCount, mandatoryTasks.length);
+  // Calculate verified count among the 3 specific channels
+  const completedCount = mandatoryTasks.filter(t => completedTaskIds.includes(t.id)).length;
+  const totalCount = 3; // Exactly 3 channels
+
+  // Verification status
+  const isUnlocked = completedCount === totalCount;
 
   const handleJoinClick = (task: Task) => {
     if (!clickedTasks.includes(task.id)) {
@@ -46,36 +48,27 @@ export const MandatoryTasksPopup: React.FC<MandatoryTasksPopupProps> = ({
     }
   };
 
-  const handleVerifyClick = (task: Task) => {
-    if (!clickedTasks.includes(task.id) && task.requiresVerification) {
-      setErrorMsg(`Please tap "[ Join ]" or "[ Start ]" to open ${task.title} before attempting verification.`);
-      showToast('Join the channel/bot first!', 'error');
-      return;
-    }
-
+  const handleVerifyClick = async (task: Task) => {
     setErrorMsg(null);
     setVerifyingTaskId(task.id);
-    showToast(`Verifying subscription for ${task.title}...`, 'pending');
+    showToast(`Checking channel membership for ${task.title}...`, 'pending');
 
-    // Simulate standard anti-cheat verification delay
-    setTimeout(() => {
-      const result = completeUserTask(user.id, task.id);
-      setVerifyingTaskId(null);
+    const result = await verifyTaskOnServer(user.id, task.id, clickedTasks.includes(task.id));
+    setVerifyingTaskId(null);
 
-      if (result.success) {
-        onUpdateState(result.user, result.db);
-        showToast(`Successfully verified: ${task.title}! +${task.rewardTM} TM`, 'success');
-      } else {
-        setErrorMsg(result.message);
-        showToast(result.message, 'error');
-      }
-    }, 1500);
+    if (result.success) {
+      onUpdateState(result.user, result.db);
+      showToast(`Successfully verified: ${task.title}! +${task.rewardTM} TM`, 'success');
+    } else {
+      setErrorMsg(result.message);
+      showToast(result.message, 'error');
+    }
   };
 
-  const handleContinue = () => {
+  const handleContinue = async () => {
     if (!isUnlocked) return;
     
-    const result = completeUserOnboarding(user.id);
+    const result = await completeOnboardingOnServer(user.id);
     if (result.success) {
       onUpdateState(result.user, result.db);
       showToast('Welcome to TM Digital! All features unlocked.', 'success');
@@ -83,72 +76,79 @@ export const MandatoryTasksPopup: React.FC<MandatoryTasksPopupProps> = ({
     onClose();
   };
 
-  // If there are no mandatory tasks configured, auto-close
+  // Automatically close and go to home page after completing all mandatory verifications
   useEffect(() => {
-    if (mandatoryTasks.length === 0) {
-      onClose();
+    if (isUnlocked && !user.mandatoryCompleted) {
+      const timer = setTimeout(async () => {
+        const result = await completeOnboardingOnServer(user.id);
+        if (result.success) {
+          onUpdateState(result.user, result.db);
+          showToast('Welcome to TM Digital! All features unlocked.', 'success');
+        }
+        onClose();
+      }, 1500);
+      return () => clearTimeout(timer);
     }
-  }, [mandatoryTasks.length, onClose]);
+  }, [isUnlocked, user.mandatoryCompleted, user.id, onUpdateState, onClose]);
 
-  // Percentage for progress indicator
-  const totalTasksToCount = Math.min(requiredCount, mandatoryTasks.length);
-  const progressPercent = totalTasksToCount > 0 
-    ? Math.min(100, (completedMandatoryCount / totalTasksToCount) * 100) 
-    : 0;
+  const progressPercent = Math.min(100, (completedCount / totalCount) * 100);
 
   return (
-    <div className="fixed inset-0 z-50 bg-[#060913]/95 backdrop-blur-md flex flex-col justify-between overflow-y-auto p-4 sm:p-6 select-none font-sans">
+    <div className="fixed inset-0 z-50 bg-[#060913] backdrop-blur-lg flex flex-col justify-between overflow-y-auto p-4 sm:p-6 select-none font-sans">
       
       {/* Decorative ambient neon glows */}
-      <div className="absolute top-0 left-1/2 -translate-x-1/2 w-72 h-72 bg-tg-blue/15 rounded-full blur-3xl pointer-events-none" />
-      <div className="absolute bottom-0 left-0 w-48 h-48 bg-amber-500/5 rounded-full blur-3xl pointer-events-none" />
+      <div className="absolute top-0 left-1/2 -translate-x-1/2 w-80 h-80 bg-tg-blue/15 rounded-full blur-3xl pointer-events-none" />
+      <div className="absolute bottom-0 right-10 w-64 h-64 bg-indigo-500/10 rounded-full blur-3xl pointer-events-none" />
 
       {/* Header section */}
       <div className="w-full max-w-md mx-auto pt-6 pb-2 space-y-4 text-center relative z-10">
-        <div className="inline-flex p-3 rounded-2xl bg-gradient-to-tr from-tg-blue/25 to-indigo-500/25 border border-tg-blue/30 shadow-lg shadow-tg-blue/20 animate-pulse">
+        <div className="inline-flex p-3 rounded-2xl bg-gradient-to-tr from-tg-blue/20 to-indigo-500/20 border border-tg-blue/30 shadow-lg shadow-tg-blue/10">
           <Sparkles className="w-8 h-8 text-amber-400" />
         </div>
         
         <div className="space-y-1.5">
-          <h2 className="text-xl sm:text-2xl font-black font-display text-white tracking-tight leading-none">
-            Complete Mandatory Tasks
+          <h2 className="text-xl sm:text-2xl font-black font-display text-white tracking-tight leading-none uppercase">
+            Channel Verification
           </h2>
-          <p className="text-xs text-tg-text-muted max-w-xs mx-auto">
-            Unlock your high-yield TM Digital holding dashboard and claim exclusive tokens.
+          <p className="text-xs text-tg-text-muted max-w-xs mx-auto leading-relaxed">
+            Welcome to <strong className="text-white">TM Digital</strong>! You must join and verify our official Telegram channels to release encryption and gain full dashboard access.
           </p>
         </div>
 
         {/* Progress indicator card */}
-        <div className="glass-panel p-4 rounded-2xl border border-white/5 space-y-2.5 bg-tg-surface/40">
+        <div className="glass-panel p-4 rounded-2xl border border-white/5 space-y-3 bg-tg-surface/40 shadow-xl shadow-black/40">
           <div className="flex justify-between items-center text-xs font-bold font-display">
-            <span className="text-tg-text-muted">Verification Status</span>
-            <span className="text-amber-400 font-mono text-sm">
-              Progress: {completedMandatoryCount}/{totalTasksToCount}
+            <span className="text-tg-text-muted uppercase tracking-wider text-[10px]">Verification Stage</span>
+            <span className="text-amber-400 font-mono text-sm bg-amber-500/10 px-2.5 py-0.5 rounded-full border border-amber-500/20">
+              Progress: {completedCount}/{totalCount}
             </span>
           </div>
 
           {/* Progress bar */}
           <div className="h-2 w-full bg-tg-dark rounded-full overflow-hidden border border-white/5 relative">
             <motion.div 
-              className="h-full bg-gradient-to-r from-tg-blue via-indigo-500 to-amber-400 rounded-full glow-blue"
+              className="h-full bg-gradient-to-r from-tg-blue via-indigo-500 to-amber-400 rounded-full"
               initial={{ width: 0 }}
               animate={{ width: `${progressPercent}%` }}
               transition={{ duration: 0.5, ease: 'easeOut' }}
             />
           </div>
 
-          <p className="text-[10px] text-tg-text-muted/85 leading-none">
-            {isUnlocked 
-              ? "✨ Complete! Tap Continue below to access the dashboard." 
-              : `Complete at least ${totalTasksToCount} task(s) to unlock full access.`}
-          </p>
+          <div className="text-[10px] text-tg-text-muted/85 flex justify-between items-center leading-none">
+            <span>Claim 500 TM total rewards</span>
+            {isUnlocked ? (
+              <span className="text-emerald-400 font-extrabold">✨ Complete! Entering dashboard...</span>
+            ) : (
+              <span>Join required channels below</span>
+            )}
+          </div>
         </div>
       </div>
 
       {/* Task list container */}
-      <div className="flex-1 w-full max-w-md mx-auto py-4 space-y-3 overflow-y-auto max-h-[50vh] pr-1.5 scrollbar relative z-10">
+      <div className="flex-1 w-full max-w-md mx-auto py-4 space-y-3 overflow-y-auto max-h-[45vh] pr-1.5 scrollbar relative z-10">
         {errorMsg && (
-          <div className="bg-red-950/20 border border-red-500/20 text-red-300 p-2.5 rounded-xl text-[11px] font-semibold flex items-center gap-2">
+          <div className="bg-red-950/20 border border-red-500/20 text-red-300 p-3 rounded-xl text-xs font-semibold flex items-center gap-2 animate-shake">
             <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
             <span>{errorMsg}</span>
           </div>
@@ -160,67 +160,71 @@ export const MandatoryTasksPopup: React.FC<MandatoryTasksPopupProps> = ({
             const isVerifying = verifyingTaskId === task.id;
             const hasClicked = clickedTasks.includes(task.id);
             
-            let typeLabel = 'Join';
-            if (task.type === 'TelegramBot') typeLabel = 'Start';
-            if (task.type === 'ExternalLink') typeLabel = 'Open';
-
             return (
               <motion.div
                 key={task.id}
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -10 }}
-                className={`p-3.5 rounded-xl border transition-all duration-200 flex items-center justify-between gap-3 ${
+                className={`p-4 rounded-xl border transition-all duration-300 flex items-center justify-between gap-3 relative overflow-hidden ${
                   isCompleted 
-                    ? 'bg-emerald-950/15 border-emerald-500/25' 
-                    : 'bg-tg-surface-light/40 border-white/5 hover:border-white/10'
+                    ? 'bg-emerald-950/10 border-emerald-500/30' 
+                    : 'bg-tg-surface-light/30 border-white/5 hover:border-white/10'
                 }`}
               >
-                <div className="flex-1 min-w-0 space-y-0.5">
-                  <div className="flex items-center gap-1.5">
+                {/* Background glow on active verification */}
+                {isVerifying && (
+                  <div className="absolute inset-0 bg-tg-blue/5 animate-pulse pointer-events-none" />
+                )}
+
+                <div className="flex-1 min-w-0 space-y-1">
+                  <div className="flex items-center gap-2">
                     {isCompleted ? (
-                      <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                      <div className="w-4 h-4 rounded-full bg-emerald-500/20 border border-emerald-500 flex items-center justify-center shrink-0">
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                      </div>
                     ) : (
-                      <div className="w-4 h-4 rounded-full border border-tg-text-muted/30 shrink-0" />
+                      <div className="w-4 h-4 rounded-full border border-white/20 shrink-0" />
                     )}
                     <span className={`text-xs font-bold truncate block ${isCompleted ? 'text-emerald-300 line-through opacity-70' : 'text-white'}`}>
                       {task.title}
                     </span>
                   </div>
-                  <p className="text-[10px] text-tg-text-muted/80 leading-relaxed truncate">
+                  <p className="text-[10px] text-tg-text-muted/85 leading-relaxed pl-6">
                     {task.description}
                   </p>
-                  <div className="text-[9px] font-mono font-bold text-amber-400/90 leading-none">
-                    +{task.rewardTM} TM Reward
+                  <div className="text-[10px] font-mono font-bold text-amber-400/90 leading-none pl-6 flex items-center gap-1">
+                    <span>Reward:</span>
+                    <span className="text-amber-300">{task.rewardTM} TM Tokens</span>
                   </div>
                 </div>
 
-                <div className="flex items-center gap-1.5 shrink-0">
+                <div className="flex items-center gap-1.5 shrink-0 relative z-10">
                   {isCompleted ? (
-                    <span className="text-[10px] font-bold text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-1 rounded-lg uppercase tracking-wider">
+                    <span className="text-[10px] font-bold text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-3 py-1.5 rounded-lg uppercase tracking-wider">
                       Verified
                     </span>
                   ) : (
                     <>
-                      {/* Action Button */}
+                      {/* Join Button */}
                       <button
                         onClick={() => handleJoinClick(task)}
                         disabled={isVerifying}
-                        className={`text-[10px] font-bold px-3 py-1.5 rounded-lg border flex items-center gap-1 transition cursor-pointer ${
+                        className={`text-[10px] font-bold px-3 py-2 rounded-lg border flex items-center gap-1.5 transition cursor-pointer ${
                           hasClicked 
                             ? 'bg-white/5 border-white/5 text-tg-text-muted' 
-                            : 'bg-tg-blue/15 border-tg-blue/30 text-tg-blue-light hover:bg-tg-blue/25'
+                            : 'bg-tg-blue/10 border-tg-blue/30 text-tg-blue-light hover:bg-tg-blue/20'
                         }`}
                       >
-                        <span>{typeLabel}</span>
-                        <ExternalLink className="w-2.5 h-2.5" />
+                        <span>Join</span>
+                        <ExternalLink className="w-3 h-3" />
                       </button>
 
                       {/* Verify Button */}
                       <button
                         onClick={() => handleVerifyClick(task)}
                         disabled={isVerifying}
-                        className="text-[10px] font-bold px-3 py-1.5 bg-amber-500 hover:bg-amber-400 text-tg-dark rounded-lg transition flex items-center justify-center gap-1 min-w-[55px] cursor-pointer"
+                        className="text-[10px] font-bold px-3 py-2 bg-amber-500 hover:bg-amber-400 text-tg-dark rounded-lg transition flex items-center justify-center gap-1.5 min-w-[65px] cursor-pointer"
                       >
                         {isVerifying ? (
                           <Loader2 className="w-3 h-3 animate-spin text-tg-dark" />
@@ -242,18 +246,18 @@ export const MandatoryTasksPopup: React.FC<MandatoryTasksPopupProps> = ({
         <button
           onClick={handleContinue}
           disabled={!isUnlocked}
-          className={`w-full py-3.5 rounded-xl font-bold font-display text-xs tracking-wide uppercase transition-all duration-300 flex items-center justify-center gap-2 border cursor-pointer ${
+          className={`w-full py-3.5 rounded-xl font-bold font-display text-xs tracking-wider uppercase transition-all duration-300 flex items-center justify-center gap-2 border cursor-pointer ${
             isUnlocked
-              ? 'bg-gradient-to-r from-tg-blue to-indigo-600 hover:from-tg-blue-light hover:to-indigo-500 text-white border-tg-blue-light shadow-lg shadow-tg-blue/30 glow-blue animate-pulse'
-              : 'bg-tg-surface-light/20 border-white/5 text-tg-text-muted opacity-40 cursor-not-allowed'
+              ? 'bg-gradient-to-r from-tg-blue to-indigo-600 hover:from-tg-blue-light hover:to-indigo-500 text-white border-tg-blue-light shadow-lg shadow-tg-blue/20 glow-blue'
+              : 'bg-tg-surface-light/10 border-white/5 text-tg-text-muted opacity-35 cursor-not-allowed'
           }`}
         >
           <span>Continue to Dashboard</span>
           <ArrowRight className="w-4 h-4" />
         </button>
 
-        <p className="text-[9px] text-center text-tg-text-muted/65 leading-none">
-          Locked Security Layer • Complete tasks above to release encryption.
+        <p className="text-[9px] text-center text-tg-text-muted/65 uppercase tracking-wider">
+          Locked Security Layer • 500 TM Token Claim Pending
         </p>
       </div>
     </div>

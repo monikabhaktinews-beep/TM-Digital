@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { TelegramUser, UserProfile, AppDatabase } from './types';
-import { getDB, getUserProfile, saveDB } from './lib/db';
+import { getDB, getUserProfile, saveDB, loadDBFromServer } from './lib/db';
 import TelegramSimulator, { SIMULATED_PROFILES } from './components/TelegramSimulator';
 import TasksTab from './components/TasksTab';
 import DepositTab from './components/DepositTab';
@@ -60,16 +60,37 @@ export default function App() {
     };
   }, []);
 
+  // Load and sync database with Express server on mount/active user change
+  useEffect(() => {
+    let active = true;
+    const fetchServerDB = async () => {
+      const serverDb = await loadDBFromServer(activeUser.id, {
+        username: activeUser.username || '',
+        firstName: activeUser.firstName,
+        lastName: activeUser.lastName || '',
+        photoUrl: activeUser.photoUrl || '',
+        languageCode: activeUser.languageCode || ''
+      });
+      if (active) {
+        setDb(serverDb);
+        const profile = serverDb.users.find(u => u.id === activeUser.id) || getUserProfile(activeUser);
+        setUserProfile(profile);
+      }
+    };
+    fetchServerDB();
+    return () => {
+      active = false;
+    };
+  }, [activeUser.id]);
+
   // Sync user profile when active user changes or DB updates
   useEffect(() => {
-    const profile = getUserProfile(activeUser);
+    const profile = db.users.find(u => u.id === activeUser.id) || getUserProfile(activeUser);
     setUserProfile(profile);
   }, [activeUser, db]);
 
   const handleUserChange = (newTgUser: TelegramUser) => {
     setActiveUser(newTgUser);
-    const profile = getUserProfile(newTgUser);
-    setUserProfile(profile);
     
     // Automatically reset tab to profile if switching users
     setActiveTab('profile');
@@ -138,6 +159,66 @@ export default function App() {
 
   // -------------------------------------------------------------
   // TELEGRAM MINI APP LAYOUT
+  // -------------------------------------------------------------
+  if (!userProfile.mandatoryCompleted && mandatoryTasks.length > 0) {
+    return (
+      <div className="min-h-screen bg-tg-dark text-tg-text font-sans flex flex-col relative selection:bg-tg-blue/30 selection:text-white">
+        {/* Central Interactive Developer simulator */}
+        <TelegramSimulator 
+          onUserChange={handleUserChange}
+          activeUser={activeUser}
+          db={db}
+          onDbReset={handleDbReset}
+          onNavigateToAdmin={navigateToAdmin}
+        />
+
+        <MandatoryTasksPopup
+          user={userProfile}
+          db={db}
+          onUpdateState={handleStateUpdate}
+          onClose={() => {
+            setActiveTab('profile');
+          }}
+          showToast={showToast}
+        />
+
+        {/* Floating native-like dynamic Toast alerts */}
+        <div className="fixed top-4 inset-x-4 z-[100] flex flex-col gap-2 pointer-events-none max-w-sm mx-auto">
+          <AnimatePresence>
+            {toasts.map((toast) => (
+              <motion.div
+                key={toast.id}
+                initial={{ opacity: 0, y: -20, scale: 0.9 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.85, transition: { duration: 0.2 } }}
+                className={`p-3 rounded-xl border shadow-xl flex items-center gap-2.5 pointer-events-auto backdrop-blur-md bg-tg-surface/90 ${
+                  toast.type === 'success' 
+                    ? 'border-emerald-500/30 shadow-emerald-950/20' 
+                    : toast.type === 'error'
+                      ? 'border-red-500/30 shadow-red-950/20'
+                      : toast.type === 'pending'
+                        ? 'border-tg-blue/30 shadow-tg-blue/20'
+                        : 'border-white/10 shadow-black/40'
+                }`}
+              >
+                {toast.type === 'success' && <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />}
+                {toast.type === 'error' && <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />}
+                {toast.type === 'pending' && <motion.div animate={{ rotate: 360 }} transition={{ repeat: Infinity, ease: 'linear', duration: 1 }} className="shrink-0"><RefreshCw className="w-4 h-4 text-tg-blue-light animate-spin" /></motion.div>}
+                {toast.type === 'info' && <Info className="w-4 h-4 text-tg-blue-light shrink-0" />}
+
+                <div className="text-xs font-semibold text-white leading-snug flex-1 pr-1">
+                  {toast.message}
+                </div>
+              </motion.div>
+            ))}
+          </AnimatePresence>
+        </div>
+      </div>
+    );
+  }
+
+  // -------------------------------------------------------------
+  // REGULAR MAIN APP VIEW
   // -------------------------------------------------------------
   return (
     <div className="min-h-screen bg-tg-dark text-tg-text font-sans flex flex-col relative selection:bg-tg-blue/30 selection:text-white">
@@ -442,21 +523,6 @@ export default function App() {
             db={db}
             onUpdateState={handleStateUpdate}
             onClose={() => setShowNotifCenter(false)}
-          />
-        )}
-      </AnimatePresence>
-
-       {/* Full-screen mandatory tasks popup blocker */}
-      <AnimatePresence>
-        {!userProfile.mandatoryCompleted && mandatoryTasks.length > 0 && (
-          <MandatoryTasksPopup
-            user={userProfile}
-            db={db}
-            onUpdateState={handleStateUpdate}
-            onClose={() => {
-              setActiveTab('profile');
-            }}
-            showToast={showToast}
           />
         )}
       </AnimatePresence>

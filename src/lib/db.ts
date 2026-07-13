@@ -41,7 +41,59 @@ const DEFAULT_WITHDRAWAL_RULES: WithdrawalRule[] = [
   }
 ];
 
-const DEFAULT_TASKS: Task[] = [];
+const DEFAULT_TASKS: Task[] = [
+  {
+    id: "mandatory_channel_1",
+    title: "TM_Digital",
+    description: "Join the official TM_Digital Telegram channel.",
+    type: "TelegramChannel",
+    rewardTM: 200,
+    link: "https://t.me/TM_Digital",
+    isMandatory: true,
+    displayOrder: 1,
+    isEnabled: true,
+    requiresVerification: true,
+    channelId: "-1003260376953"
+  },
+  {
+    id: "mandatory_channel_2",
+    title: "TM_Back",
+    description: "Join the official TM_Back Telegram channel.",
+    type: "TelegramChannel",
+    rewardTM: 150,
+    link: "https://t.me/TM_Back",
+    isMandatory: true,
+    displayOrder: 2,
+    isEnabled: true,
+    requiresVerification: true,
+    channelId: "-1001179648853"
+  },
+  {
+    id: "mandatory_channel_3",
+    title: "TM_With",
+    description: "Join the official TM_With Telegram channel.",
+    type: "TelegramChannel",
+    rewardTM: 150,
+    link: "https://t.me/TM_With",
+    isMandatory: true,
+    displayOrder: 3,
+    isEnabled: true,
+    requiresVerification: true,
+    channelId: "-1001873895959"
+  },
+  {
+    id: "task_optional_1",
+    title: "Follow TM Digital on X",
+    description: "Follow @TM_Digital on X (Twitter) for instant updates.",
+    type: "ExternalLink",
+    rewardTM: 100,
+    link: "https://x.com",
+    isMandatory: false,
+    displayOrder: 4,
+    isEnabled: true,
+    requiresVerification: true
+  }
+];
 
 const DEFAULT_CHANNELS: Channel[] = [];
 
@@ -312,9 +364,9 @@ const DEFAULT_TICKETS: SupportTicket[] = [
 ];
 
 const DEFAULT_COMPLETED_TASKS: { [userId: string]: string[] } = {
-  "111111111": ["task_1", "task_2", "task_3"], // Sarah has completed mandatory ones
-  "333333333": ["task_1", "task_2", "task_3"], // Dwight too
-  "222222222": ["task_1"] // Michael only completed 1 mandatory
+  "111111111": ["mandatory_channel_1", "mandatory_channel_2", "mandatory_channel_3"], // Sarah has completed mandatory ones
+  "333333333": ["mandatory_channel_1", "mandatory_channel_2", "mandatory_channel_3"], // Dwight too
+  "222222222": ["mandatory_channel_1"] // Michael only completed 1 mandatory
 };
 
 const DEFAULT_CLAIMED_BONUSES: { [userId: string]: string } = {
@@ -406,6 +458,48 @@ export const getDB = (): AppDatabase => {
         db.transfers = [];
       }
 
+      // Enforce the 3 mandatory channels are always present and properly configured
+      const mandatoryIds = ["mandatory_channel_1", "mandatory_channel_2", "mandatory_channel_3"];
+      const mandatoryDefs = DEFAULT_TASKS.filter(t => mandatoryIds.includes(t.id));
+      if (!db.tasks) db.tasks = [];
+      
+      let didEnforceTasks = false;
+      mandatoryDefs.forEach(def => {
+        const idx = db.tasks.findIndex((t: any) => t.id === def.id);
+        if (idx === -1) {
+          db.tasks.push(def);
+          didEnforceTasks = true;
+        } else {
+          const existing = db.tasks[idx];
+          if (
+            existing.title !== def.title ||
+            existing.rewardTM !== def.rewardTM ||
+            existing.link !== def.link ||
+            existing.channelId !== def.channelId ||
+            !existing.isMandatory ||
+            !existing.isEnabled
+          ) {
+            db.tasks[idx] = {
+              ...existing,
+              title: def.title,
+              description: def.description,
+              type: def.type,
+              rewardTM: def.rewardTM,
+              link: def.link,
+              isMandatory: true,
+              isEnabled: true,
+              requiresVerification: true,
+              channelId: def.channelId
+            };
+            didEnforceTasks = true;
+          }
+        }
+      });
+
+      if (didEnforceTasks) {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(db));
+      }
+
       // Automatically strip out the default mock tasks/channels so the user gets a clean panel
       const defaultMockTaskIds = ["task_1", "task_2", "task_3", "task_4", "task_5", "task_6"];
       const defaultMockChannelIds = ["chan_1", "chan_2"];
@@ -495,6 +589,86 @@ export const getDB = (): AppDatabase => {
 
 export const saveDB = (db: AppDatabase) => {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(db));
+  
+  // Background server save
+  fetch('/api/db/save', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(db)
+  }).catch(err => console.error("Error saving DB to server", err));
+};
+
+export const verifyTaskOnServer = async (
+  userId: string,
+  taskId: string,
+  hasClickedJoin: boolean = false
+): Promise<{ success: boolean; message: string; db: AppDatabase; user: UserProfile }> => {
+  try {
+    const response = await fetch('/api/tasks/verify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId, taskId, hasClickedJoin })
+    });
+    if (response.ok) {
+      const result = await response.json();
+      if (result.success) {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(result.db));
+        return { success: true, message: result.message, db: result.db, user: result.user };
+      } else {
+        const db = getDB();
+        const user = db.users.find(u => u.id === userId) || db.users[0];
+        return { success: false, message: result.message, db, user };
+      }
+    }
+  } catch (e) {
+    console.error("Error during server task verification", e);
+  }
+  const db = getDB();
+  const user = db.users.find(u => u.id === userId) || db.users[0];
+  return { success: false, message: "❌ Server verification error. Please try again.", db, user };
+};
+
+export const completeOnboardingOnServer = async (
+  userId: string
+): Promise<{ success: boolean; db: AppDatabase; user: UserProfile }> => {
+  try {
+    const response = await fetch('/api/onboarding/complete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId })
+    });
+    if (response.ok) {
+      const result = await response.json();
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(result.db));
+      return { success: true, db: result.db, user: result.user };
+    }
+  } catch (e) {
+    console.error("Error during server onboarding completion", e);
+  }
+  
+  // Client-side fallback
+  const db = getDB();
+  const user = db.users.find(u => u.id === userId);
+  if (user) {
+    user.mandatoryCompleted = true;
+    saveDB(db);
+  }
+  return { success: true, db, user: user as any };
+};
+
+export const loadDBFromServer = async (userId: string, extraData: any = {}): Promise<AppDatabase> => {
+  try {
+    const params = new URLSearchParams({ userId, ...extraData });
+    const response = await fetch(`/api/db?${params.toString()}`);
+    if (response.ok) {
+      const db = await response.json();
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(db));
+      return db;
+    }
+  } catch (e) {
+    console.error("Error loading DB from server", e);
+  }
+  return getDB();
 };
 
 export const resetDB = () => {

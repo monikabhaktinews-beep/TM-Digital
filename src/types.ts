@@ -52,6 +52,7 @@ export interface Task {
   displayOrder: number;
   isEnabled: boolean;
   requiresVerification: boolean;
+  channelId?: string; // Optional Channel ID for Bot API checks
 }
 
 export interface Channel {
