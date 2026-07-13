@@ -377,69 +377,88 @@ async function startServer() {
     }
   }
 
-  async function fetchTelegramWithRetry(url: string, retries = 3, timeoutMs = 6000): Promise<any> {
-    for (let i = 0; i < retries; i++) {
+  async function fetchTelegramWithRetry(url: string, retries = 1, timeoutMs = 6000): Promise<any> {
+    const totalAttempts = retries + 1;
+    for (let i = 0; i < totalAttempts; i++) {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
       try {
-        console.log(`[Telegram API] Attempt ${i + 1} to fetch: ${url.replace(/bot[^/]+/, 'bot****')}`);
+        console.log(`[Telegram API Request] Attempt ${i + 1}/${totalAttempts} to fetch URL: ${url.replace(/bot[^/]+/, 'bot****')}`);
         const response = await fetch(url, { signal: controller.signal });
         clearTimeout(timeoutId);
         
+        console.log(`[Telegram API Response] Attempt ${i + 1} HTTP Status: ${response.status}`);
         if (!response.ok) {
           const errText = await response.text();
-          console.error(`[Telegram API Attempt ${i + 1}] Server returned status ${response.status}: ${errText}`);
-          if (i === retries - 1) {
-            throw new Error(`Status ${response.status}: ${errText}`);
+          console.error(`[Telegram API Attempt ${i + 1} Error] Status ${response.status}: ${errText}`);
+          if (i === totalAttempts - 1) {
+            throw new Error(`HTTP Error ${response.status}: ${errText}`);
           }
         } else {
           const data = await response.json();
+          console.log(`[Telegram API Attempt ${i + 1} Success] Response JSON:`, JSON.stringify(data));
           return data;
         }
       } catch (e: any) {
         clearTimeout(timeoutId);
-        console.error(`[Telegram API Attempt ${i + 1}] Error:`, e.message || e);
-        if (i === retries - 1) {
+        console.error(`[Telegram API Attempt ${i + 1} Exception] Error:`, e.message || e);
+        if (i === totalAttempts - 1) {
           throw e;
         }
       }
-      // Wait briefly before retrying
-      await new Promise(resolve => setTimeout(resolve, 500));
+      // Wait briefly before retrying (max retry once)
+      if (i < totalAttempts - 1) {
+        console.log(`[Telegram API] Retrying once in 500ms...`);
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
     }
   }
 
   function parseTelegramError(data: any): string {
     if (!data) return "❌ Telegram API check failed. Please try again.";
     const desc = data.description || "";
-    console.log(`[Task Verification] Parsing Telegram API error: description="${desc}"`);
+    const errCode = data.error_code || "";
+    console.log(`[Task Verification] Parsing Telegram API error: code="${errCode}", description="${desc}"`);
 
+    if (errCode === 401 || desc.includes("Unauthorized") || desc.includes("unauthorized") || desc.includes("token")) {
+      return "401 Unauthorized - Invalid Bot Token. Please check your TELEGRAM_BOT_TOKEN environment variable.";
+    }
+    if (errCode === 429 || desc.includes("Too Many Requests")) {
+      return "429 Too Many Requests - Telegram API rate limit exceeded. Please try again later.";
+    }
     if (desc.includes("chat not found")) {
-      return "• Channel ID incorrect";
+      return "400 chat not found - Channel ID incorrect. Ensure the channel is correct and your bot has been added.";
     }
     if (desc.includes("user not found")) {
-      return "• User not found";
+      return "400 user not found - The Telegram user ID was not found.";
     }
-    if (desc.includes("bot is not a member") || desc.includes("Forbidden") || desc.includes("not member") || desc.includes("admin")) {
-      return "• Bot is not admin";
-    }
-    if (desc.includes("Unauthorized") || desc.includes("unauthorized") || desc.includes("token")) {
-      return "• Invalid Bot Token";
+    if (errCode === 403 || desc.includes("bot is not a member") || desc.includes("Forbidden") || desc.includes("not member") || desc.includes("admin")) {
+      return "403 Forbidden - Bot is not admin. Make sure the bot is added as an administrator in the target channel.";
     }
 
-    return `❌ Telegram API check failed: ${desc || 'Unknown error'}`;
+    return `❌ Telegram API check failed (${errCode || 'Unknown'}): ${desc || 'Unknown error'}`;
   }
 
   function parseExceptionToReason(err: any): string {
     const errMsg = err.message || "";
+    console.error(`[Task Verification] Parsing exception: "${errMsg}"`);
+
     if (err.name === 'AbortError' || errMsg.includes("timeout") || errMsg.includes("abort")) {
-      return "• Telegram API timeout";
+      return "Telegram API timeout - Connection to Telegram servers timed out. Please try again.";
     }
-    if (errMsg.includes("Unauthorized") || errMsg.includes("401") || errMsg.includes("404")) {
-      return "• Invalid Bot Token";
+    if (errMsg.includes("401") || errMsg.includes("Unauthorized") || errMsg.includes("unauthorized")) {
+      return "401 Unauthorized - Invalid Bot Token. Please check your TELEGRAM_BOT_TOKEN environment variable.";
     }
-    if (errMsg.includes("chat not found") || errMsg.includes("400")) {
-      return "• Channel ID incorrect";
+    if (errMsg.includes("400") && (errMsg.includes("chat not found") || errMsg.includes("chat_id"))) {
+      return "400 chat not found - Channel ID incorrect or bot is not in the channel.";
     }
+    if (errMsg.includes("403") || errMsg.includes("Forbidden") || errMsg.includes("forbidden")) {
+      return "403 Forbidden - Bot is not admin. Ensure your bot is an administrator in the channel.";
+    }
+    if (errMsg.includes("429")) {
+      return "429 Too Many Requests - Telegram API rate limit exceeded. Please try again later.";
+    }
+
     return `❌ Connection to Telegram Bot API failed: ${errMsg || 'Please try again.'}`;
   }
 
@@ -447,7 +466,7 @@ async function startServer() {
   app.post('/api/tasks/verify', async (req, res) => {
     try {
       const { userId, taskId, hasClickedJoin, initData } = req.body;
-      console.log(`[Task Verification API] Request received: userId=${userId}, taskId=${taskId}, hasClickedJoin=${hasClickedJoin}, hasInitData=${!!initData}`);
+      console.log(`[Task Verification API] Request received: UserID=${userId}, TaskID=${taskId}, ClickedJoin=${hasClickedJoin}, hasInitData=${!!initData}`);
 
       if (!userId || !taskId) {
         return res.status(200).json({ success: false, message: "❌ Missing userId or taskId" });
@@ -461,7 +480,7 @@ async function startServer() {
       const user = db.users.find((u: any) => u.id === userId);
       const task = db.tasks.find((t: any) => t.id === taskId);
 
-      if (!user) return res.status(200).json({ success: false, message: "• User not found" });
+      if (!user) return res.status(200).json({ success: false, message: "400 user not found" });
       if (user.isBanned) return res.status(200).json({ success: false, message: "❌ Your account is permanently banned." });
       if (user.isFrozen) return res.status(200).json({ success: false, message: "❌ Your account is frozen." });
       if (!task) return res.status(200).json({ success: false, message: "❌ Task not found on the server." });
@@ -476,7 +495,8 @@ async function startServer() {
       }
 
       // Determine verification method
-      const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+      const rawToken = process.env.TELEGRAM_BOT_TOKEN || "";
+      const BOT_TOKEN = rawToken.trim();
       const isChannel = task.type === 'TelegramChannel' || task.type === 'TelegramGroup';
       const channelId = task.channelId;
 
@@ -489,7 +509,7 @@ async function startServer() {
         if (initData) {
           if (!BOT_TOKEN || BOT_TOKEN === 'YOUR_TELEGRAM_BOT_TOKEN' || BOT_TOKEN.trim() === '') {
             console.error("[Task Verification API] Bot token not configured or default.");
-            return res.status(200).json({ success: false, message: "• Invalid Bot Token" });
+            return res.status(200).json({ success: false, message: "401 Unauthorized - Invalid Bot Token" });
           }
 
           const validation = validateInitData(initData, BOT_TOKEN);
@@ -523,29 +543,31 @@ async function startServer() {
         } else {
           // Real Bot API verification
           if (!BOT_TOKEN || BOT_TOKEN === 'YOUR_TELEGRAM_BOT_TOKEN' || BOT_TOKEN.trim() === '') {
-            return res.status(200).json({ success: false, message: "• Invalid Bot Token" });
+            return res.status(200).json({ success: false, message: "401 Unauthorized - Invalid Bot Token" });
           }
 
           try {
             const checkUrl = `https://api.telegram.org/bot${BOT_TOKEN}/getChatMember?chat_id=${channelId}&user_id=${realTelegramUserId}`;
-            const data = await fetchTelegramWithRetry(checkUrl, 3, 6000);
+            console.log(`[Task Verification API] Querying Telegram: URL=${checkUrl.replace(BOT_TOKEN, 'bot****')}, chat_id=${channelId}, user_id=${realTelegramUserId}`);
+            const data = await fetchTelegramWithRetry(checkUrl, 1, 6000);
 
             if (data.ok && data.result) {
               const status = data.result.status;
+              console.log(`[Task Verification API] User ${realTelegramUserId} membership status in ${channelId} is: ${status}`);
               // Accept member, administrator and creator
               // Reject left, kicked and restricted users
               if (['member', 'administrator', 'creator'].includes(status)) {
                 verificationPassed = true;
               } else {
                 verificationPassed = false;
-                failReason = "❌ Please join this channel first.";
+                failReason = `❌ Please join this channel first. (Current status: ${status})`;
               }
             } else {
               verificationPassed = false;
               failReason = parseTelegramError(data);
             }
           } catch (e: any) {
-            console.error("[Task Verification API] getChatMember exception:", e);
+            console.error("[Task Verification API Exception] getChatMember call error:", e);
             verificationPassed = false;
             failReason = parseExceptionToReason(e);
           }
@@ -561,6 +583,7 @@ async function startServer() {
       }
 
       if (!verificationPassed) {
+        console.warn(`[Task Verification API Failed] Verification did not pass. Reason: "${failReason}"`);
         return res.status(200).json({ success: false, message: failReason });
       }
 
@@ -593,6 +616,7 @@ async function startServer() {
 
       // Save DB
       saveDB(db);
+      console.log(`[Task Verification API Success] User ${userId} successfully completed ${taskId}. Balance is now ${user.balanceTM} TM.`);
 
       res.status(200).json({
         success: true,
@@ -646,6 +670,102 @@ async function startServer() {
   // Health check
   app.get('/api/health', (req, res) => {
     res.json({ status: 'ok', botId: '8905253397', botUsername: '@TM_DigitalBot' });
+  });
+
+  // System diagnostics check for Telegram Bot API integration
+  app.get('/api/diagnostics', async (req, res) => {
+    const rawToken = process.env.TELEGRAM_BOT_TOKEN || "";
+    const BOT_TOKEN = rawToken.trim();
+    const testUserId = req.query.userId ? req.query.userId.toString() : '111111111';
+
+    const report: any = {
+      botTokenLoaded: false,
+      botTokenPrefix: "None",
+      telegramApiReachable: false,
+      telegramApiError: null,
+      botMeResponse: null,
+      channels: []
+    };
+
+    if (BOT_TOKEN && BOT_TOKEN !== 'YOUR_TELEGRAM_BOT_TOKEN' && BOT_TOKEN.trim() !== '') {
+      report.botTokenLoaded = true;
+      report.botTokenPrefix = BOT_TOKEN.substring(0, Math.min(8, BOT_TOKEN.length)) + "..." + BOT_TOKEN.substring(Math.max(0, BOT_TOKEN.length - 4));
+    }
+
+    if (report.botTokenLoaded) {
+      try {
+        console.log(`[Diagnostics] Testing Telegram API with getMe...`);
+        const meUrl = `https://api.telegram.org/bot${BOT_TOKEN}/getMe`;
+        const meResponse = await fetch(meUrl);
+        const meData = await meResponse.json();
+        report.telegramApiReachable = meData.ok;
+        report.botMeResponse = meData;
+        if (!meData.ok) {
+          report.telegramApiError = meData.description || "API response not OK";
+        }
+      } catch (err: any) {
+        report.telegramApiReachable = false;
+        report.telegramApiError = err.message || err;
+      }
+    }
+
+    const testChannels = [
+      { id: "-1003260376953", name: "TM_Digital" },
+      { id: "-1001179648853", name: "TM_Back" },
+      { id: "-1001873895959", name: "TM_With" }
+    ];
+
+    if (report.botTokenLoaded && report.telegramApiReachable) {
+      for (const chan of testChannels) {
+        const channelResult: any = {
+          channelId: chan.id,
+          channelName: chan.name,
+          exists: false,
+          botIsAdmin: false,
+          chatInfo: null,
+          getChatMemberResponse: null,
+          error: null
+        };
+
+        try {
+          // 1. Get Chat info
+          const chatUrl = `https://api.telegram.org/bot${BOT_TOKEN}/getChat?chat_id=${chan.id}`;
+          console.log(`[Diagnostics] Testing getChat for ${chan.name} (${chan.id})...`);
+          const chatRes = await fetch(chatUrl);
+          const chatData = await chatRes.json();
+          channelResult.chatInfo = chatData;
+
+          if (chatData.ok) {
+            channelResult.exists = true;
+          } else {
+            channelResult.error = chatData.description || "getChat failed";
+          }
+
+          // 2. Get Chat Member for test user
+          const memberUrl = `https://api.telegram.org/bot${BOT_TOKEN}/getChatMember?chat_id=${chan.id}&user_id=${testUserId}`;
+          console.log(`[Diagnostics] Testing getChatMember for user ${testUserId} in ${chan.name}...`);
+          const memberRes = await fetch(memberUrl);
+          const memberData = await memberRes.json();
+          channelResult.getChatMemberResponse = memberData;
+
+          if (memberData.ok && memberData.result) {
+            const status = memberData.result.status;
+            // Bot needs to be an admin to call getChatMember on channels, or at least the API call shouldn't return error
+            channelResult.botIsAdmin = true; // Since the API call succeeded and returned user info, the bot is in the chat and has sufficient permissions to query
+          } else {
+            if (memberData && memberData.description) {
+              channelResult.error = memberData.description;
+            }
+          }
+        } catch (chanErr: any) {
+          channelResult.error = chanErr.message || chanErr;
+        }
+
+        report.channels.push(channelResult);
+      }
+    }
+
+    res.json(report);
   });
 
   // -------------------------------------------------------------

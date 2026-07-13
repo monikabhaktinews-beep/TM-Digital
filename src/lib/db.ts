@@ -620,13 +620,17 @@ export const verifyTaskOnServer = async (
         const user = db.users.find(u => u.id === userId) || db.users[0];
         return { success: false, message: result.message, db, user };
       }
+    } else {
+      const db = getDB();
+      const user = db.users.find(u => u.id === userId) || db.users[0];
+      return { success: false, message: `❌ Server returned HTTP ${response.status}. Please check server logs.`, db, user };
     }
-  } catch (e) {
+  } catch (e: any) {
     console.error("Error during server task verification", e);
+    const db = getDB();
+    const user = db.users.find(u => u.id === userId) || db.users[0];
+    return { success: false, message: `❌ Network connection error: ${e.message || e}`, db, user };
   }
-  const db = getDB();
-  const user = db.users.find(u => u.id === userId) || db.users[0];
-  return { success: false, message: "❌ Server verification error. Please try again.", db, user };
 };
 
 export const completeOnboardingOnServer = async (
