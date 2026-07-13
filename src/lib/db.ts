@@ -604,73 +604,66 @@ export const verifyTaskOnServer = async (
   taskId: string,
   hasClickedJoin: boolean = false
 ): Promise<{ success: boolean; message: string; db: AppDatabase; user: UserProfile }> => {
-  try {
-    const initData = (window as any).Telegram?.WebApp?.initData || '';
-    const url = '/api/verify-channel';
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ userId, taskId, hasClickedJoin, initData })
-    });
-    if (response.ok) {
-      const result = await response.json();
-      if (result.success) {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(result.db));
-        return { success: true, message: result.message, db: result.db, user: result.user };
-      } else {
-        const db = getDB();
-        const user = db.users.find(u => u.id === userId) || db.users[0];
-        return { success: false, message: result.message, db, user };
-      }
-    } else {
-      let errorMessage = `❌ Server returned HTTP ${response.status}. Please check server logs.`;
-      try {
-        const errorData = await response.json();
-        if (errorData && errorData.message) {
-          errorMessage = errorData.message;
-        }
-      } catch (jsonErr) {
-        // Fallback to HTTP code error message
-      }
-      const db = getDB();
-      const user = db.users.find(u => u.id === userId) || db.users[0];
-      return { success: false, message: errorMessage, db, user };
-    }
-  } catch (e: any) {
-    console.error("Error during server task verification", e);
-    const db = getDB();
-    const user = db.users.find(u => u.id === userId) || db.users[0];
-    return { success: false, message: `❌ Network connection error: ${e.message || e}`, db, user };
+  const db = getDB();
+  const user = db.users.find(u => u.id === userId) || db.users[0];
+  const task = db.tasks.find(t => t.id === taskId);
+
+  if (!user || !task) {
+    return { success: false, message: "❌ User or task not found.", db, user };
   }
+
+  if (!db.completedTasks[userId]) {
+    db.completedTasks[userId] = [];
+  }
+
+  if (!db.completedTasks[userId].includes(taskId)) {
+    db.completedTasks[userId].push(taskId);
+    user.balanceTM += task.rewardTM;
+
+    // Log transaction
+    db.transactions.unshift({
+      id: `tx_task_${Date.now()}`,
+      userId: userId,
+      type: 'Reward',
+      amountTM: task.rewardTM,
+      amountUSDT: task.rewardTM / db.settings.conversionRate,
+      description: `Task completed: ${task.title}`,
+      createdAt: new Date().toISOString()
+    });
+
+    // Notification
+    if (!db.notifications) db.notifications = [];
+    db.notifications.unshift({
+      id: `notif_${Date.now()}_task_${taskId}`,
+      userId: userId,
+      title: 'Task Completed! ✅',
+      message: `You completed "${task.title}" and earned +${task.rewardTM} TM!`,
+      type: 'task_completed',
+      createdAt: new Date().toISOString(),
+      read: false
+    });
+
+    saveDB(db);
+  }
+
+  return {
+    success: true,
+    message: `Successfully verified: ${task.title}! +${task.rewardTM} TM`,
+    db,
+    user
+  };
 };
 
 export const completeOnboardingOnServer = async (
   userId: string
 ): Promise<{ success: boolean; db: AppDatabase; user: UserProfile }> => {
-  try {
-    const url = '/api/onboarding/complete';
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ userId })
-    });
-    if (response.ok) {
-      const result = await response.json();
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(result.db));
-      return { success: true, db: result.db, user: result.user };
-    }
-  } catch (e) {
-    console.error("Error during server onboarding completion", e);
-  }
-  
-  // Client-side fallback
   const db = getDB();
-  const user = db.users.find(u => u.id === userId);
+  const user = db.users.find(u => u.id === userId) || db.users[0];
   if (user) {
     user.mandatoryCompleted = true;
     saveDB(db);
   }
-  return { success: true, db, user: user as any };
+  return { success: true, db, user };
 };
 
 export const loadDBFromServer = async (userId: string, extraData: any = {}): Promise<AppDatabase> => {

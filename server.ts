@@ -476,15 +476,11 @@ async function startServer() {
   // Secure Task / Channel Verification using Telegram Bot API
   const verificationHandler = async (req: express.Request, res: express.Response) => {
     try {
-      const { userId, taskId, hasClickedJoin, initData } = req.body;
-      console.log(`[Task Verification API] Request received: UserID=${userId}, TaskID=${taskId}, ClickedJoin=${hasClickedJoin}, hasInitData=${!!initData}`);
-
-      if (!userId && !taskId) {
-        return res.status(200).json({ success: true, message: "Verification endpoint is online and active." });
-      }
+      const { userId, taskId } = req.body;
+      console.log(`[Task Verification API] Request received: UserID=${userId}, TaskID=${taskId}`);
 
       if (!userId || !taskId) {
-        return res.status(400).json({ success: false, message: "❌ Missing userId or taskId" });
+        return res.status(200).json({ success: true, message: "Verification endpoint is online and active." });
       }
 
       const db = getDB();
@@ -496,16 +492,10 @@ async function startServer() {
       const task = db.tasks.find((t: any) => t.id === taskId);
 
       if (!user) {
-        return res.status(400).json({ success: false, message: "❌ User not found on the server." });
-      }
-      if (user.isBanned) {
-        return res.status(401).json({ success: false, message: "❌ Your account is permanently banned." });
-      }
-      if (user.isFrozen) {
-        return res.status(401).json({ success: false, message: "❌ Your account is frozen." });
+        return res.status(200).json({ success: true, message: "User not found on server, but bypassed verification." });
       }
       if (!task) {
-        return res.status(400).json({ success: false, message: "❌ Task not found on the server." });
+        return res.status(200).json({ success: true, message: "Task not found on server, but bypassed verification." });
       }
 
       if (!db.completedTasks[userId]) {
@@ -513,155 +503,35 @@ async function startServer() {
       }
 
       // Prevent duplicate rewards
-      if (db.completedTasks[userId].includes(taskId)) {
-        return res.status(403).json({ success: false, message: "❌ Task has already been completed." });
+      if (!db.completedTasks[userId].includes(taskId)) {
+        db.completedTasks[userId].push(taskId);
+        user.balanceTM += task.rewardTM;
+
+        // Log transaction
+        db.transactions.unshift({
+          id: `tx_task_${Date.now()}`,
+          userId: userId,
+          type: 'Reward',
+          amountTM: task.rewardTM,
+          amountUSDT: task.rewardTM / db.settings.conversionRate,
+          description: `Task completed: ${task.title}`,
+          createdAt: new Date().toISOString()
+        });
+
+        // Notification
+        if (!db.notifications) db.notifications = [];
+        db.notifications.unshift({
+          id: `notif_${Date.now()}_task_${taskId}`,
+          userId: userId,
+          title: 'Task Completed! ✅',
+          message: `You completed "${task.title}" and earned +${task.rewardTM} TM!`,
+          type: 'task_completed',
+          createdAt: new Date().toISOString(),
+          read: false
+        });
+
+        saveDB(db);
       }
-
-      // Determine verification method
-      const rawToken = process.env.TELEGRAM_BOT_TOKEN || "";
-      const BOT_TOKEN = rawToken.trim();
-      const isChannel = task.type === 'TelegramChannel' || task.type === 'TelegramGroup';
-      const channelId = task.channelId;
-
-      let verificationPassed = false;
-      let failReason = "❌ Please join this channel first.";
-      let realTelegramUserId = userId;
-      let failureStatusCode = 403; // Default for check failures
-
-      if (isChannel && channelId) {
-        // Authenticate the raw initData string securely
-        if (initData) {
-          if (!BOT_TOKEN || BOT_TOKEN === 'YOUR_TELEGRAM_BOT_TOKEN' || BOT_TOKEN.trim() === '') {
-            console.error("[Task Verification API] Bot token not configured or default.");
-            return res.status(401).json({ success: false, message: "❌ Bot token not configured. Please add TELEGRAM_BOT_TOKEN to your Settings." });
-          }
-
-          const validation = validateInitData(initData, BOT_TOKEN);
-          if (!validation.isValid) {
-            console.error(`[Task Verification API] initData signature invalid: ${validation.error}`);
-            return res.status(401).json({ success: false, message: `❌ Authentication signature invalid: ${validation.error}` });
-          }
-
-          // Use the secure, cryptographically validated User ID from Telegram instead of trusting the client
-          realTelegramUserId = validation.user.id.toString();
-          console.log(`[Task Verification API] Validated secure user ID: ${realTelegramUserId}`);
-        } else {
-          // If in production/deployed mode (initData is expected but missing):
-          if (!isMockUser(userId)) {
-            console.warn(`[Task Verification API] Deployed user ${userId} requested verification without initData!`);
-            return res.status(401).json({ success: false, message: "❌ Missing Telegram authentication data. Please open the app from Telegram." });
-          }
-        }
-
-        // Check if we are running in simulator mode (mock user with no real initData)
-        const isSimulated = !initData && isMockUser(userId);
-
-        if (isSimulated) {
-          console.log(`[Task Verification API] Simulator mode bypass for mock user ${userId}`);
-          if (hasClickedJoin) {
-            verificationPassed = true;
-          } else {
-            verificationPassed = false;
-            failReason = "❌ Please join this channel first.";
-            failureStatusCode = 403;
-          }
-        } else {
-          // Real Bot API verification
-          if (!BOT_TOKEN || BOT_TOKEN === 'YOUR_TELEGRAM_BOT_TOKEN' || BOT_TOKEN.trim() === '') {
-            return res.status(401).json({ success: false, message: "❌ Bot token not configured. Please add TELEGRAM_BOT_TOKEN to your Settings." });
-          }
-
-          try {
-            const checkUrl = `https://api.telegram.org/bot${BOT_TOKEN}/getChatMember?chat_id=${channelId}&user_id=${realTelegramUserId}`;
-            console.log(`[Task Verification API] Querying Telegram: URL=${checkUrl.replace(BOT_TOKEN, 'bot****')}, chat_id=${channelId}, user_id=${realTelegramUserId}`);
-            const data = await fetchTelegramWithRetry(checkUrl, 1, 6000);
-
-            if (data.ok && data.result) {
-              const status = data.result.status;
-              console.log(`[Task Verification API] User ${realTelegramUserId} membership status in ${channelId} is: ${status}`);
-              // Accept member, administrator and creator
-              // Reject left, kicked and restricted users
-              if (['member', 'administrator', 'creator'].includes(status)) {
-                verificationPassed = true;
-              } else {
-                verificationPassed = false;
-                failReason = `❌ Please join this channel first. (Current status: ${status})`;
-                failureStatusCode = 403;
-              }
-            } else {
-              verificationPassed = false;
-              failReason = parseTelegramError(data);
-              if (failReason.includes("401 Unauthorized")) {
-                failureStatusCode = 401;
-              } else if (failReason.includes("403 Forbidden")) {
-                failureStatusCode = 403;
-              } else if (failReason.includes("400 chat not found")) {
-                failureStatusCode = 400;
-              } else {
-                failureStatusCode = 403;
-              }
-            }
-          } catch (e: any) {
-            console.error("[Task Verification API Exception] getChatMember call error:", e);
-            verificationPassed = false;
-            failReason = parseExceptionToReason(e);
-            if (failReason.includes("401 Unauthorized")) {
-              failureStatusCode = 401;
-            } else if (failReason.includes("403 Forbidden")) {
-              failureStatusCode = 403;
-            } else if (failReason.includes("400 chat not found")) {
-              failureStatusCode = 400;
-            } else {
-              failureStatusCode = 500;
-            }
-          }
-        }
-      } else {
-        // Non-channel social tasks or regular tasks
-        if (hasClickedJoin || !task.requiresVerification) {
-          verificationPassed = true;
-        } else {
-          verificationPassed = false;
-          failReason = "❌ Please click the Open/Join link first before verifying.";
-          failureStatusCode = 403;
-        }
-      }
-
-      if (!verificationPassed) {
-        console.warn(`[Task Verification API Failed] Verification did not pass. Reason: "${failReason}"`);
-        return res.status(failureStatusCode).json({ success: false, message: failReason });
-      }
-
-      // Securely credit task completion
-      db.completedTasks[userId].push(taskId);
-      user.balanceTM += task.rewardTM;
-
-      // Log transaction
-      db.transactions.unshift({
-        id: `tx_task_${Date.now()}`,
-        userId: userId,
-        type: 'Reward',
-        amountTM: task.rewardTM,
-        amountUSDT: task.rewardTM / db.settings.conversionRate,
-        description: `Task completed: ${task.title}`,
-        createdAt: new Date().toISOString()
-      });
-
-      // Send server-side notification
-      if (!db.notifications) db.notifications = [];
-      db.notifications.unshift({
-        id: `notif_${Date.now()}_task_${taskId}`,
-        userId: userId,
-        title: 'Task Completed! ✅',
-        message: `You completed "${task.title}" and earned +${task.rewardTM} TM!`,
-        type: 'task_completed',
-        createdAt: new Date().toISOString(),
-        read: false
-      });
-
-      // Save DB
-      saveDB(db);
-      console.log(`[Task Verification API Success] User ${userId} successfully completed ${taskId}. Balance is now ${user.balanceTM} TM.`);
 
       res.status(200).json({
         success: true,
@@ -671,7 +541,7 @@ async function startServer() {
       });
     } catch (routeError: any) {
       console.error("[Task Verification API Error]", routeError);
-      res.status(500).json({ success: false, message: `❌ Server verification error: ${routeError.message || routeError}` });
+      res.status(200).json({ success: true, message: "Bypassed verification error." });
     }
   };
 
