@@ -52,7 +52,7 @@ export const TasksTab: React.FC<TasksTabProps> = ({
   };
 
   const handleVerify = async (task: Task) => {
-    if (!clickedTasks.includes(task.id) && task.requiresVerification) {
+    if (!clickedTasks.includes(task.id)) {
       if (showToast) {
         showToast("Please join or click the 'Join'/'Open' button first to initiate verification.", 'error');
       } else {

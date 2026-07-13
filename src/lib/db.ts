@@ -612,6 +612,10 @@ export const verifyTaskOnServer = async (
     return { success: false, message: "❌ User or task not found.", db, user };
   }
 
+  if (!hasClickedJoin) {
+    return { success: false, message: "❌ Please click the 'Join' or 'Open' button first to initiate verification.", db, user };
+  }
+
   if (!db.completedTasks[userId]) {
     db.completedTasks[userId] = [];
   }
