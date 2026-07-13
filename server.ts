@@ -463,27 +463,35 @@ async function startServer() {
   }
 
   // Secure Task / Channel Verification using Telegram Bot API
-  app.post('/api/tasks/verify', async (req, res) => {
+  const verificationHandler = async (req: express.Request, res: express.Response) => {
     try {
       const { userId, taskId, hasClickedJoin, initData } = req.body;
       console.log(`[Task Verification API] Request received: UserID=${userId}, TaskID=${taskId}, ClickedJoin=${hasClickedJoin}, hasInitData=${!!initData}`);
 
       if (!userId || !taskId) {
-        return res.status(200).json({ success: false, message: "❌ Missing userId or taskId" });
+        return res.status(400).json({ success: false, message: "❌ Missing userId or taskId" });
       }
 
       const db = getDB();
       if (!db) {
-        return res.status(200).json({ success: false, message: "❌ Database error on the server" });
+        return res.status(500).json({ success: false, message: "❌ Database error on the server" });
       }
 
       const user = db.users.find((u: any) => u.id === userId);
       const task = db.tasks.find((t: any) => t.id === taskId);
 
-      if (!user) return res.status(200).json({ success: false, message: "400 user not found" });
-      if (user.isBanned) return res.status(200).json({ success: false, message: "❌ Your account is permanently banned." });
-      if (user.isFrozen) return res.status(200).json({ success: false, message: "❌ Your account is frozen." });
-      if (!task) return res.status(200).json({ success: false, message: "❌ Task not found on the server." });
+      if (!user) {
+        return res.status(400).json({ success: false, message: "❌ User not found on the server." });
+      }
+      if (user.isBanned) {
+        return res.status(401).json({ success: false, message: "❌ Your account is permanently banned." });
+      }
+      if (user.isFrozen) {
+        return res.status(401).json({ success: false, message: "❌ Your account is frozen." });
+      }
+      if (!task) {
+        return res.status(400).json({ success: false, message: "❌ Task not found on the server." });
+      }
 
       if (!db.completedTasks[userId]) {
         db.completedTasks[userId] = [];
@@ -491,7 +499,7 @@ async function startServer() {
 
       // Prevent duplicate rewards
       if (db.completedTasks[userId].includes(taskId)) {
-        return res.status(200).json({ success: false, message: "❌ Task has already been completed." });
+        return res.status(403).json({ success: false, message: "❌ Task has already been completed." });
       }
 
       // Determine verification method
@@ -503,19 +511,20 @@ async function startServer() {
       let verificationPassed = false;
       let failReason = "❌ Please join this channel first.";
       let realTelegramUserId = userId;
+      let failureStatusCode = 403; // Default for check failures
 
       if (isChannel && channelId) {
         // Authenticate the raw initData string securely
         if (initData) {
           if (!BOT_TOKEN || BOT_TOKEN === 'YOUR_TELEGRAM_BOT_TOKEN' || BOT_TOKEN.trim() === '') {
             console.error("[Task Verification API] Bot token not configured or default.");
-            return res.status(200).json({ success: false, message: "401 Unauthorized - Invalid Bot Token" });
+            return res.status(401).json({ success: false, message: "❌ Bot token not configured. Please add TELEGRAM_BOT_TOKEN to your Settings." });
           }
 
           const validation = validateInitData(initData, BOT_TOKEN);
           if (!validation.isValid) {
             console.error(`[Task Verification API] initData signature invalid: ${validation.error}`);
-            return res.status(200).json({ success: false, message: `❌ Authentication signature invalid: ${validation.error}` });
+            return res.status(401).json({ success: false, message: `❌ Authentication signature invalid: ${validation.error}` });
           }
 
           // Use the secure, cryptographically validated User ID from Telegram instead of trusting the client
@@ -525,7 +534,7 @@ async function startServer() {
           // If in production/deployed mode (initData is expected but missing):
           if (!isMockUser(userId)) {
             console.warn(`[Task Verification API] Deployed user ${userId} requested verification without initData!`);
-            return res.status(200).json({ success: false, message: "❌ Missing Telegram authentication data. Please open the app from Telegram." });
+            return res.status(401).json({ success: false, message: "❌ Missing Telegram authentication data. Please open the app from Telegram." });
           }
         }
 
@@ -539,11 +548,12 @@ async function startServer() {
           } else {
             verificationPassed = false;
             failReason = "❌ Please join this channel first.";
+            failureStatusCode = 403;
           }
         } else {
           // Real Bot API verification
           if (!BOT_TOKEN || BOT_TOKEN === 'YOUR_TELEGRAM_BOT_TOKEN' || BOT_TOKEN.trim() === '') {
-            return res.status(200).json({ success: false, message: "401 Unauthorized - Invalid Bot Token" });
+            return res.status(401).json({ success: false, message: "❌ Bot token not configured. Please add TELEGRAM_BOT_TOKEN to your Settings." });
           }
 
           try {
@@ -561,15 +571,34 @@ async function startServer() {
               } else {
                 verificationPassed = false;
                 failReason = `❌ Please join this channel first. (Current status: ${status})`;
+                failureStatusCode = 403;
               }
             } else {
               verificationPassed = false;
               failReason = parseTelegramError(data);
+              if (failReason.includes("401 Unauthorized")) {
+                failureStatusCode = 401;
+              } else if (failReason.includes("403 Forbidden")) {
+                failureStatusCode = 403;
+              } else if (failReason.includes("400 chat not found")) {
+                failureStatusCode = 400;
+              } else {
+                failureStatusCode = 403;
+              }
             }
           } catch (e: any) {
             console.error("[Task Verification API Exception] getChatMember call error:", e);
             verificationPassed = false;
             failReason = parseExceptionToReason(e);
+            if (failReason.includes("401 Unauthorized")) {
+              failureStatusCode = 401;
+            } else if (failReason.includes("403 Forbidden")) {
+              failureStatusCode = 403;
+            } else if (failReason.includes("400 chat not found")) {
+              failureStatusCode = 400;
+            } else {
+              failureStatusCode = 500;
+            }
           }
         }
       } else {
@@ -579,12 +608,13 @@ async function startServer() {
         } else {
           verificationPassed = false;
           failReason = "❌ Please click the Open/Join link first before verifying.";
+          failureStatusCode = 403;
         }
       }
 
       if (!verificationPassed) {
         console.warn(`[Task Verification API Failed] Verification did not pass. Reason: "${failReason}"`);
-        return res.status(200).json({ success: false, message: failReason });
+        return res.status(failureStatusCode).json({ success: false, message: failReason });
       }
 
       // Securely credit task completion
@@ -626,9 +656,12 @@ async function startServer() {
       });
     } catch (routeError: any) {
       console.error("[Task Verification API Error]", routeError);
-      res.status(200).json({ success: false, message: `❌ Server verification error: ${routeError.message || routeError}` });
+      res.status(500).json({ success: false, message: `❌ Server verification error: ${routeError.message || routeError}` });
     }
-  });
+  };
+
+  app.post('/api/tasks/verify', verificationHandler);
+  app.post('/api/verify-channel', verificationHandler);
 
   // Secure Onboarding Completion
   app.post('/api/onboarding/complete', (req, res) => {
@@ -669,7 +702,7 @@ async function startServer() {
 
   // Health check
   app.get('/api/health', (req, res) => {
-    res.json({ status: 'ok', botId: '8905253397', botUsername: '@TM_DigitalBot' });
+    res.json({ status: 'ok' });
   });
 
   // System diagnostics check for Telegram Bot API integration

@@ -591,7 +591,8 @@ export const saveDB = (db: AppDatabase) => {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(db));
   
   // Background server save
-  fetch('/api/db/save', {
+  const url = typeof window !== 'undefined' ? `${window.location.origin}/api/db/save` : '/api/db/save';
+  fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(db)
@@ -605,7 +606,8 @@ export const verifyTaskOnServer = async (
 ): Promise<{ success: boolean; message: string; db: AppDatabase; user: UserProfile }> => {
   try {
     const initData = (window as any).Telegram?.WebApp?.initData || '';
-    const response = await fetch('/api/tasks/verify', {
+    const url = typeof window !== 'undefined' ? `${window.location.origin}/api/verify-channel` : '/api/verify-channel';
+    const response = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ userId, taskId, hasClickedJoin, initData })
@@ -621,9 +623,18 @@ export const verifyTaskOnServer = async (
         return { success: false, message: result.message, db, user };
       }
     } else {
+      let errorMessage = `❌ Server returned HTTP ${response.status}. Please check server logs.`;
+      try {
+        const errorData = await response.json();
+        if (errorData && errorData.message) {
+          errorMessage = errorData.message;
+        }
+      } catch (jsonErr) {
+        // Fallback to HTTP code error message
+      }
       const db = getDB();
       const user = db.users.find(u => u.id === userId) || db.users[0];
-      return { success: false, message: `❌ Server returned HTTP ${response.status}. Please check server logs.`, db, user };
+      return { success: false, message: errorMessage, db, user };
     }
   } catch (e: any) {
     console.error("Error during server task verification", e);
@@ -637,7 +648,8 @@ export const completeOnboardingOnServer = async (
   userId: string
 ): Promise<{ success: boolean; db: AppDatabase; user: UserProfile }> => {
   try {
-    const response = await fetch('/api/onboarding/complete', {
+    const url = typeof window !== 'undefined' ? `${window.location.origin}/api/onboarding/complete` : '/api/onboarding/complete';
+    const response = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ userId })
@@ -664,7 +676,8 @@ export const completeOnboardingOnServer = async (
 export const loadDBFromServer = async (userId: string, extraData: any = {}): Promise<AppDatabase> => {
   try {
     const params = new URLSearchParams({ userId, ...extraData });
-    const response = await fetch(`/api/db?${params.toString()}`);
+    const url = typeof window !== 'undefined' ? `${window.location.origin}/api/db?${params.toString()}` : `/api/db?${params.toString()}`;
+    const response = await fetch(url);
     if (response.ok) {
       const db = await response.json();
       localStorage.setItem(STORAGE_KEY, JSON.stringify(db));
