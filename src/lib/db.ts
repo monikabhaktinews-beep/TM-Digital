@@ -448,6 +448,12 @@ export const getDB = (): AppDatabase => {
       // Ensure all settings fields exist on loaded DB
       db.settings = { ...DEFAULT_SETTINGS, ...db.settings };
       db.withdrawalRules = DEFAULT_WITHDRAWAL_RULES;
+      
+      // Ensure users exists and is not empty
+      if (!db.users || !Array.isArray(db.users) || db.users.length === 0) {
+        db.users = [...DEFAULT_USERS];
+      }
+
       if (!db.taskSubmissions) {
         db.taskSubmissions = [];
       }
@@ -677,6 +683,9 @@ export const loadDBFromServer = async (userId: string, extraData: any = {}): Pro
     const response = await fetch(url);
     if (response.ok) {
       const db = await response.json();
+      if (!db.users || !Array.isArray(db.users) || db.users.length === 0) {
+        db.users = [...DEFAULT_USERS];
+      }
       localStorage.setItem(STORAGE_KEY, JSON.stringify(db));
       return db;
     }

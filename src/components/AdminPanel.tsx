@@ -119,24 +119,24 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   // -------------------------------------------------------------
   // METRICS COMPUTATIONS
   // -------------------------------------------------------------
-  const totalUsers = db.users.length;
+  const totalUsers = (db.users || []).length;
   // Let's assume users registered today (since 2026-07-11) are considered "Today's Users"
-  const todayUsers = db.users.filter(u => u.registeredAt.startsWith('2026-07-11')).length + 1; // simulation fallback offset
+  const todayUsers = (db.users || []).filter(u => u.registeredAt && typeof u.registeredAt === 'string' && u.registeredAt.startsWith('2026-07-11')).length + 1; // simulation fallback offset
   const onlineUsers = Math.max(2, Math.floor(Math.random() * 5) + 3); // Simulated live users
 
-  const pendingDeposits = db.deposits.filter(d => d.status === 'Pending');
-  const pendingWithdrawals = db.withdrawals.filter(w => w.status === 'Pending');
+  const pendingDeposits = (db.deposits || []).filter(d => d.status === 'Pending');
+  const pendingWithdrawals = (db.withdrawals || []).filter(w => w.status === 'Pending');
   const pendingSubmissions = (db.taskSubmissions || []).filter(s => s.status === 'Pending');
 
-  const totalRevenueUSDT = db.deposits
+  const totalRevenueUSDT = (db.deposits || [])
     .filter(d => d.status === 'Approved')
-    .reduce((sum, d) => sum + d.amountUSDT, 0);
+    .reduce((sum, d) => sum + (d.amountUSDT || 0), 0);
 
-  const totalReferralsPaidUSDT = db.users.reduce((sum, u) => sum + u.referralEarningsUSDT, 0);
+  const totalReferralsPaidUSDT = (db.users || []).reduce((sum, u) => sum + (u.referralEarningsUSDT || 0), 0);
 
-  const totalBonusClaimsUSDT = db.transactions
+  const totalBonusClaimsUSDT = (db.transactions || [])
     .filter(tx => tx.type === 'DailyBonus')
-    .reduce((sum, tx) => sum + tx.amountUSDT, 0);
+    .reduce((sum, tx) => sum + (tx.amountUSDT || 0), 0);
 
   // -------------------------------------------------------------
   // LOGIN SCREEN
@@ -524,11 +524,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
               ) : (
                 /* User List directory */
                 <div className="glass-panel rounded-2xl border border-white/5 divide-y divide-white/5">
-                  {db.users
+                  {(db.users || [])
                     .filter(u => {
                       const q = userSearchQuery.toLowerCase();
-                      return u.firstName.toLowerCase().includes(q) || 
-                             u.id.includes(q) || 
+                      return (u.firstName && u.firstName.toLowerCase().includes(q)) || 
+                             (u.id && u.id.includes(q)) || 
                              (u.uid && String(u.uid).includes(q)) ||
                              (u.username && u.username.toLowerCase().includes(q));
                     })
@@ -541,15 +541,15 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                         <div className="flex items-center gap-2.5">
                           <img src={user.photoUrl} className="w-8 h-8 rounded-full border border-white/5 object-cover" alt="" referrerPolicy="no-referrer" />
                           <div>
-                            <span className="font-semibold text-xs text-white block">{user.firstName} {user.lastName || ''}</span>
+                            <span className="font-semibold text-xs text-white block">{user.firstName || 'User'} {user.lastName || ''}</span>
                             <span className="text-[10px] text-tg-text-muted block">UID: <span className="text-white font-bold">{user.uid}</span> | @{user.username || 'NoUsername'} (ID: {user.id})</span>
                           </div>
                         </div>
 
                         <div className="flex items-center gap-3">
                           <div className="text-right">
-                            <span className="font-bold text-xs text-amber-400 block font-mono">{user.balanceTM} TM</span>
-                            <span className="text-[9px] text-emerald-400 font-bold block">${user.balanceUSDT} USDT</span>
+                            <span className="font-bold text-xs text-amber-400 block font-mono">{user.balanceTM ?? 0} TM</span>
+                            <span className="text-[9px] text-emerald-400 font-bold block">${user.balanceUSDT ?? 0.0} USDT</span>
                           </div>
                           
                           {user.isBanned ? (

@@ -203,6 +203,9 @@ function getDB() {
     const parsed = JSON.parse(content);
     // Ensure default settings and tasks exist
     parsed.settings = { ...DEFAULT_SETTINGS, ...parsed.settings };
+    if (!parsed.users || !Array.isArray(parsed.users) || parsed.users.length === 0) {
+      parsed.users = [...DEFAULT_USERS];
+    }
     if (!parsed.tasks || parsed.tasks.length === 0) {
       parsed.tasks = DEFAULT_TASKS;
     } else {
@@ -330,7 +333,9 @@ async function startServer() {
       
       // Update users' state fields but do NOT trust client balance modifications directly unless we have to,
       // though for simulation completeness we let admin updates sync!
-      currentDb.users = updatedDb.users;
+      if (updatedDb.users && Array.isArray(updatedDb.users) && updatedDb.users.length > 0) {
+        currentDb.users = updatedDb.users;
+      }
       currentDb.completedTasks = updatedDb.completedTasks || currentDb.completedTasks;
       
       saveDB(currentDb);
