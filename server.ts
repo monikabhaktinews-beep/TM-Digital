@@ -479,6 +479,10 @@ async function startServer() {
       const { userId, taskId, hasClickedJoin, initData } = req.body;
       console.log(`[Task Verification API] Request received: UserID=${userId}, TaskID=${taskId}, ClickedJoin=${hasClickedJoin}, hasInitData=${!!initData}`);
 
+      if (!userId && !taskId) {
+        return res.status(200).json({ success: true, message: "Verification endpoint is online and active." });
+      }
+
       if (!userId || !taskId) {
         return res.status(400).json({ success: false, message: "❌ Missing userId or taskId" });
       }
