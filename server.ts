@@ -19,7 +19,7 @@ const isMockUser = (userId: string) => {
 // Default Database Setup
 const DEFAULT_SETTINGS = {
   conversionRate: 1000,
-  referralRewardUSDT: 0.0,
+  referralRewardUSDT: 0.02,
   referralRewardTM: 100,
   dailyBonusRateUSDT: 0.11,
   dailyBonusIntervalHours: 24,
@@ -270,6 +270,7 @@ async function startServer() {
   // -------------------------------------------------------------
 
   // Get current DB, optionally register user
+  // Get current DB, optionally register user
   app.get('/api/db', (req, res) => {
     const db = getDB();
     if (!db) {
@@ -301,6 +302,7 @@ async function startServer() {
           depositStatus: 'None',
           withdrawStatus: 'None',
           referralCount: 0,
+          referralCounted: false,
           isFrozen: false,
           isBanned: false,
           mandatoryCompleted: false
@@ -308,6 +310,97 @@ async function startServer() {
         db.users.push(user);
         saveDB(db);
       }
+
+      // Check for referral param if passed in query
+      let refId = (req.query.ref as string || '').trim();
+      if (refId) {
+        if (refId.startsWith('ref_')) {
+          refId = refId.substring(4);
+        }
+        const refVal = refId.trim();
+        // If user doesn't have a referrer and hasn't been counted yet, and ref is valid
+        if (refVal && refVal !== userId && (!user.referredBy || !user.referralCounted)) {
+          // Find referrer by numeric UID or string ID
+          const referrer = db.users.find((u: any) => String(u.uid) === refVal || u.id === refVal);
+          if (referrer && referrer.id !== userId && !referrer.isBanned && !referrer.isFrozen) {
+            user.referredBy = referrer.id;
+            
+            // "Jab is page me ayega to hi refer add hoga"
+            // We credit the referrer immediately!
+            if (!user.referralCounted) {
+              user.referralCounted = true;
+              
+              const referralRewardTM = db.settings.referralRewardTM ?? 100;
+              const referralRewardUSDT = db.settings.referralRewardUSDT ?? 0.02;
+
+              referrer.balanceTM = (referrer.balanceTM || 0) + referralRewardTM;
+              referrer.referralEarningsTM = (referrer.referralEarningsTM || 0) + referralRewardTM;
+              referrer.balanceUSDT = Number(((referrer.balanceUSDT || 0) + referralRewardUSDT).toFixed(4));
+              referrer.referralEarningsUSDT = Number(((referrer.referralEarningsUSDT || 0) + referralRewardUSDT).toFixed(4));
+              referrer.referralCount = (referrer.referralCount || 0) + 1;
+
+              // Log referral transaction for referrer
+              db.transactions.push({
+                id: `ref_tx_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+                userId: referrer.id,
+                type: 'Referral',
+                amountTM: referralRewardTM,
+                amountUSDT: referralRewardUSDT,
+                description: `Referral Reward for inviting ${user.firstName} (@${user.username || user.id})`,
+                createdAt: new Date().toISOString()
+              });
+
+              // Dispatch Referral notification to the referrer
+              if (!db.notifications) db.notifications = [];
+              db.notifications.unshift({
+                id: `notif_${Date.now()}_ref_${Math.random().toString(36).substring(2, 7)}`,
+                userId: referrer.id,
+                title: 'Referral Completed! 👥',
+                message: `Your invitee ${user.firstName} joined. You received +$${referralRewardUSDT} USDT & +${referralRewardTM} TM!`,
+                type: 'referral_completed',
+                createdAt: new Date().toISOString(),
+                read: false
+              });
+
+              // Milestone rewards check
+              if (!referrer.claimedMilestones) {
+                referrer.claimedMilestones = [];
+              }
+              const milestones = db.settings.referralMilestones || [];
+              for (const milestone of milestones) {
+                if (referrer.referralCount >= milestone.count && !referrer.claimedMilestones.includes(milestone.count)) {
+                  referrer.balanceTM = (referrer.balanceTM || 0) + milestone.rewardTM;
+                  referrer.claimedMilestones.push(milestone.count);
+
+                  // Log milestone reward
+                  db.transactions.push({
+                    id: `tx_milestone_${milestone.count}_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+                    userId: referrer.id,
+                    type: 'Reward',
+                    amountTM: milestone.rewardTM,
+                    amountUSDT: 0,
+                    description: `Referral Milestone Reward: Reached ${milestone.count} Referrals!`,
+                    createdAt: new Date().toISOString()
+                  });
+
+                  // Dispatch Milestone notification to the referrer
+                  db.notifications.unshift({
+                    id: `notif_${Date.now()}_ms_${milestone.count}_${Math.random().toString(36).substring(2, 7)}`,
+                    userId: referrer.id,
+                    title: 'Milestone Unlocked! 🏆',
+                    message: `Reached ${milestone.count} total referrals! You earned a milestone bonus of +${milestone.rewardTM} TM!`,
+                    type: 'milestone_unlocked',
+                    createdAt: new Date().toISOString(),
+                    read: false
+                  });
+                }
+              }
+            }
+          }
+        }
+      }
+
+      saveDB(db);
     }
 
     res.json(db);

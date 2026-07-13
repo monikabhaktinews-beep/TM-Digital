@@ -5,7 +5,7 @@ const STORAGE_KEY = 'tm_digital_database_v1';
 // Initial Mock Setup
 const DEFAULT_SETTINGS: SystemSettings = {
   conversionRate: 1000, // 1 USDT = 1000 TM
-  referralRewardUSDT: 0.0, // 0.00 USDT (replaced with TM)
+  referralRewardUSDT: 0.02, // 0.02 USDT per referral
   referralRewardTM: 100, // 100 TM Referral reward
   dailyBonusRateUSDT: 0.11, // 0.11 USDT per 1000 TM
   dailyBonusIntervalHours: 24,
@@ -829,7 +829,74 @@ export const getUserProfile = (tgUser: { id: string; username?: string; firstNam
         const referrer = db.users.find(u => u.id === refVal || String(u.uid) === refVal);
         if (referrer && referrer.id !== tgUser.id && !referrer.isBanned && !referrer.isFrozen) {
           user.referredBy = referrer.id;
-          user.referralCounted = false;
+          
+          if (!user.referralCounted) {
+            user.referralCounted = true;
+            
+            const referralRewardTM = db.settings.referralRewardTM ?? 100;
+            const referralRewardUSDT = db.settings.referralRewardUSDT ?? 0.02;
+
+            referrer.balanceTM = (referrer.balanceTM || 0) + referralRewardTM;
+            referrer.referralEarningsTM = (referrer.referralEarningsTM || 0) + referralRewardTM;
+            referrer.balanceUSDT = Number(((referrer.balanceUSDT || 0) + referralRewardUSDT).toFixed(4));
+            referrer.referralEarningsUSDT = Number(((referrer.referralEarningsUSDT || 0) + referralRewardUSDT).toFixed(4));
+            referrer.referralCount = (referrer.referralCount || 0) + 1;
+
+            // Log referral transaction for referrer
+            db.transactions.push({
+              id: `ref_tx_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+              userId: referrer.id,
+              type: 'Referral',
+              amountTM: referralRewardTM,
+              amountUSDT: referralRewardUSDT,
+              description: `Referral Reward for inviting ${user.firstName} (@${user.username || user.id})`,
+              createdAt: new Date().toISOString()
+            });
+
+            // Dispatch Referral notification to the referrer
+            if (!db.notifications) db.notifications = [];
+            db.notifications.unshift({
+              id: `notif_${Date.now()}_ref_${Math.random().toString(36).substring(2, 7)}`,
+              userId: referrer.id,
+              title: 'Referral Completed! 👥',
+              message: `Your invitee ${user.firstName} joined. You received +$${referralRewardUSDT} USDT & +${referralRewardTM} TM!`,
+              type: 'referral_completed',
+              createdAt: new Date().toISOString(),
+              read: false
+            });
+
+            // Milestone rewards check
+            if (!referrer.claimedMilestones) {
+              referrer.claimedMilestones = [];
+            }
+            const milestones = db.settings.referralMilestones || [];
+            for (const milestone of milestones) {
+              if (referrer.referralCount >= milestone.count && !referrer.claimedMilestones.includes(milestone.count)) {
+                referrer.balanceTM = (referrer.balanceTM || 0) + milestone.rewardTM;
+                referrer.claimedMilestones.push(milestone.count);
+
+                db.transactions.push({
+                  id: `tx_milestone_${milestone.count}_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+                  userId: referrer.id,
+                  type: 'Reward',
+                  amountTM: milestone.rewardTM,
+                  amountUSDT: 0,
+                  description: `Referral Milestone Reward: Reached ${milestone.count} Referrals!`,
+                  createdAt: new Date().toISOString()
+                });
+
+                db.notifications.unshift({
+                  id: `notif_${Date.now()}_ms_${milestone.count}_${Math.random().toString(36).substring(2, 7)}`,
+                  userId: referrer.id,
+                  title: 'Milestone Unlocked! 🏆',
+                  message: `Reached ${milestone.count} total referrals! You earned a milestone bonus of +${milestone.rewardTM} TM!`,
+                  type: 'milestone_unlocked',
+                  createdAt: new Date().toISOString(),
+                  read: false
+                });
+              }
+            }
+          }
         }
       }
     }
