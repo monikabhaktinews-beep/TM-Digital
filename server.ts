@@ -3,6 +3,7 @@ import path from 'path';
 import fs from 'fs';
 import { createServer as createViteServer } from 'vite';
 import dotenv from 'dotenv';
+import crypto from 'crypto';
 
 // Load env variables
 dotenv.config();
@@ -329,131 +330,280 @@ async function startServer() {
     }
   });
 
+  // -------------------------------------------------------------
+  // TELEGRAM MINI APP HELPER FUNCTIONS
+  // -------------------------------------------------------------
+
+  function validateInitData(initData: string, botToken: string): { isValid: boolean; user?: any; error?: string } {
+    if (!initData) {
+      return { isValid: false, error: "Missing initData" };
+    }
+    if (!botToken) {
+      return { isValid: false, error: "Bot token not configured" };
+    }
+
+    try {
+      const params = new URLSearchParams(initData);
+      const hash = params.get('hash');
+      if (!hash) {
+        return { isValid: false, error: "Missing hash parameter" };
+      }
+
+      // Sort parameters and build data-check-string
+      const keys = Array.from(params.keys()).filter(k => k !== 'hash').sort();
+      const dataCheckString = keys.map(k => `${k}=${params.get(k)}`).join('\n');
+
+      // Compute secret key
+      const secretKey = crypto.createHmac('sha256', 'WebAppData').update(botToken).digest();
+      
+      // Compute HMAC-SHA256 signature
+      const computedHash = crypto.createHmac('sha256', secretKey).update(dataCheckString).digest('hex');
+
+      if (computedHash !== hash) {
+        return { isValid: false, error: "Hash mismatch" };
+      }
+
+      // Parse user data
+      const userJson = params.get('user');
+      if (!userJson) {
+        return { isValid: false, error: "Missing user parameter" };
+      }
+
+      const user = JSON.parse(userJson);
+      return { isValid: true, user };
+    } catch (e: any) {
+      console.error("Error validating initData", e);
+      return { isValid: false, error: e.message || "Unknown validation error" };
+    }
+  }
+
+  async function fetchTelegramWithRetry(url: string, retries = 3, timeoutMs = 6000): Promise<any> {
+    for (let i = 0; i < retries; i++) {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+      try {
+        console.log(`[Telegram API] Attempt ${i + 1} to fetch: ${url.replace(/bot[^/]+/, 'bot****')}`);
+        const response = await fetch(url, { signal: controller.signal });
+        clearTimeout(timeoutId);
+        
+        if (!response.ok) {
+          const errText = await response.text();
+          console.error(`[Telegram API Attempt ${i + 1}] Server returned status ${response.status}: ${errText}`);
+          if (i === retries - 1) {
+            throw new Error(`Status ${response.status}: ${errText}`);
+          }
+        } else {
+          const data = await response.json();
+          return data;
+        }
+      } catch (e: any) {
+        clearTimeout(timeoutId);
+        console.error(`[Telegram API Attempt ${i + 1}] Error:`, e.message || e);
+        if (i === retries - 1) {
+          throw e;
+        }
+      }
+      // Wait briefly before retrying
+      await new Promise(resolve => setTimeout(resolve, 500));
+    }
+  }
+
+  function parseTelegramError(data: any): string {
+    if (!data) return "❌ Telegram API check failed. Please try again.";
+    const desc = data.description || "";
+    console.log(`[Task Verification] Parsing Telegram API error: description="${desc}"`);
+
+    if (desc.includes("chat not found")) {
+      return "• Channel ID incorrect";
+    }
+    if (desc.includes("user not found")) {
+      return "• User not found";
+    }
+    if (desc.includes("bot is not a member") || desc.includes("Forbidden") || desc.includes("not member") || desc.includes("admin")) {
+      return "• Bot is not admin";
+    }
+    if (desc.includes("Unauthorized") || desc.includes("unauthorized") || desc.includes("token")) {
+      return "• Invalid Bot Token";
+    }
+
+    return `❌ Telegram API check failed: ${desc || 'Unknown error'}`;
+  }
+
+  function parseExceptionToReason(err: any): string {
+    const errMsg = err.message || "";
+    if (err.name === 'AbortError' || errMsg.includes("timeout") || errMsg.includes("abort")) {
+      return "• Telegram API timeout";
+    }
+    if (errMsg.includes("Unauthorized") || errMsg.includes("401") || errMsg.includes("404")) {
+      return "• Invalid Bot Token";
+    }
+    if (errMsg.includes("chat not found") || errMsg.includes("400")) {
+      return "• Channel ID incorrect";
+    }
+    return `❌ Connection to Telegram Bot API failed: ${errMsg || 'Please try again.'}`;
+  }
+
   // Secure Task / Channel Verification using Telegram Bot API
   app.post('/api/tasks/verify', async (req, res) => {
-    const { userId, taskId, hasClickedJoin } = req.body;
-    if (!userId || !taskId) {
-      return res.status(400).json({ error: 'Missing userId or taskId' });
-    }
+    try {
+      const { userId, taskId, hasClickedJoin, initData } = req.body;
+      console.log(`[Task Verification API] Request received: userId=${userId}, taskId=${taskId}, hasClickedJoin=${hasClickedJoin}, hasInitData=${!!initData}`);
 
-    const db = getDB();
-    if (!db) {
-      return res.status(500).json({ error: 'Database error' });
-    }
+      if (!userId || !taskId) {
+        return res.status(200).json({ success: false, message: "❌ Missing userId or taskId" });
+      }
 
-    const user = db.users.find((u: any) => u.id === userId);
-    const task = db.tasks.find((t: any) => t.id === taskId);
+      const db = getDB();
+      if (!db) {
+        return res.status(200).json({ success: false, message: "❌ Database error on the server" });
+      }
 
-    if (!user) return res.json({ success: false, message: "❌ User not found on the server." });
-    if (user.isBanned) return res.json({ success: false, message: "❌ Your account is permanently banned." });
-    if (user.isFrozen) return res.json({ success: false, message: "❌ Your account is frozen." });
-    if (!task) return res.json({ success: false, message: "❌ Task not found on the server." });
+      const user = db.users.find((u: any) => u.id === userId);
+      const task = db.tasks.find((t: any) => t.id === taskId);
 
-    if (!db.completedTasks[userId]) {
-      db.completedTasks[userId] = [];
-    }
+      if (!user) return res.status(200).json({ success: false, message: "• User not found" });
+      if (user.isBanned) return res.status(200).json({ success: false, message: "❌ Your account is permanently banned." });
+      if (user.isFrozen) return res.status(200).json({ success: false, message: "❌ Your account is frozen." });
+      if (!task) return res.status(200).json({ success: false, message: "❌ Task not found on the server." });
 
-    // Prevent duplicate rewards
-    if (db.completedTasks[userId].includes(taskId)) {
-      return res.json({ success: false, message: "❌ Task has already been completed." });
-    }
+      if (!db.completedTasks[userId]) {
+        db.completedTasks[userId] = [];
+      }
 
-    // Determine verification method
-    const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
-    const isChannel = task.type === 'TelegramChannel' || task.type === 'TelegramGroup';
-    const channelId = task.channelId;
+      // Prevent duplicate rewards
+      if (db.completedTasks[userId].includes(taskId)) {
+        return res.status(200).json({ success: false, message: "❌ Task has already been completed." });
+      }
 
-    let verificationPassed = false;
-    let failReason = "❌ Please join this channel first.";
+      // Determine verification method
+      const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+      const isChannel = task.type === 'TelegramChannel' || task.type === 'TelegramGroup';
+      const channelId = task.channelId;
 
-    if (isChannel && channelId) {
-      // If we have a BOT_TOKEN and it's NOT a simulated mock user, run actual Telegram validation
-      if (BOT_TOKEN && BOT_TOKEN !== 'YOUR_TELEGRAM_BOT_TOKEN' && !isMockUser(userId)) {
-        try {
-          const checkUrl = `https://api.telegram.org/bot${BOT_TOKEN}/getChatMember?chat_id=${channelId}&user_id=${userId}`;
-          const response = await fetch(checkUrl);
-          const data = await response.json();
+      let verificationPassed = false;
+      let failReason = "❌ Please join this channel first.";
+      let realTelegramUserId = userId;
 
-          if (data.ok && data.result) {
-            const status = data.result.status;
-            // Valid statuses: member, administrator, creator
-            if (['member', 'administrator', 'creator'].includes(status)) {
-              verificationPassed = true;
-            } else {
-              verificationPassed = false;
-              failReason = "❌ Please join this channel first.";
-            }
+      if (isChannel && channelId) {
+        // Authenticate the raw initData string securely
+        if (initData) {
+          if (!BOT_TOKEN || BOT_TOKEN === 'YOUR_TELEGRAM_BOT_TOKEN' || BOT_TOKEN.trim() === '') {
+            console.error("[Task Verification API] Bot token not configured or default.");
+            return res.status(200).json({ success: false, message: "• Invalid Bot Token" });
+          }
+
+          const validation = validateInitData(initData, BOT_TOKEN);
+          if (!validation.isValid) {
+            console.error(`[Task Verification API] initData signature invalid: ${validation.error}`);
+            return res.status(200).json({ success: false, message: `❌ Authentication signature invalid: ${validation.error}` });
+          }
+
+          // Use the secure, cryptographically validated User ID from Telegram instead of trusting the client
+          realTelegramUserId = validation.user.id.toString();
+          console.log(`[Task Verification API] Validated secure user ID: ${realTelegramUserId}`);
+        } else {
+          // If in production/deployed mode (initData is expected but missing):
+          if (!isMockUser(userId)) {
+            console.warn(`[Task Verification API] Deployed user ${userId} requested verification without initData!`);
+            return res.status(200).json({ success: false, message: "❌ Missing Telegram authentication data. Please open the app from Telegram." });
+          }
+        }
+
+        // Check if we are running in simulator mode (mock user with no real initData)
+        const isSimulated = !initData && isMockUser(userId);
+
+        if (isSimulated) {
+          console.log(`[Task Verification API] Simulator mode bypass for mock user ${userId}`);
+          if (hasClickedJoin) {
+            verificationPassed = true;
           } else {
-            // Telegram API call failed (e.g. user not found or bot not admin)
             verificationPassed = false;
             failReason = "❌ Please join this channel first.";
           }
-        } catch (e: any) {
-          console.error("Error checking Telegram member", e);
-          verificationPassed = false;
-          failReason = "❌ Please join this channel first.";
+        } else {
+          // Real Bot API verification
+          if (!BOT_TOKEN || BOT_TOKEN === 'YOUR_TELEGRAM_BOT_TOKEN' || BOT_TOKEN.trim() === '') {
+            return res.status(200).json({ success: false, message: "• Invalid Bot Token" });
+          }
+
+          try {
+            const checkUrl = `https://api.telegram.org/bot${BOT_TOKEN}/getChatMember?chat_id=${channelId}&user_id=${realTelegramUserId}`;
+            const data = await fetchTelegramWithRetry(checkUrl, 3, 6000);
+
+            if (data.ok && data.result) {
+              const status = data.result.status;
+              // Accept member, administrator and creator
+              // Reject left, kicked and restricted users
+              if (['member', 'administrator', 'creator'].includes(status)) {
+                verificationPassed = true;
+              } else {
+                verificationPassed = false;
+                failReason = "❌ Please join this channel first.";
+              }
+            } else {
+              verificationPassed = false;
+              failReason = parseTelegramError(data);
+            }
+          } catch (e: any) {
+            console.error("[Task Verification API] getChatMember exception:", e);
+            verificationPassed = false;
+            failReason = parseExceptionToReason(e);
+          }
         }
       } else {
-        // SIMULATED ENVIRONMENT / DEVELOPMENT MODE:
-        // Users must click "Join" first before trying to verify!
-        if (hasClickedJoin) {
+        // Non-channel social tasks or regular tasks
+        if (hasClickedJoin || !task.requiresVerification) {
           verificationPassed = true;
         } else {
           verificationPassed = false;
-          failReason = "❌ Please join this channel first.";
+          failReason = "❌ Please click the Open/Join link first before verifying.";
         }
       }
-    } else {
-      // Non-channel social tasks or regular tasks (Taking proofs removed!)
-      // Verify immediately if they opened the link!
-      if (hasClickedJoin || !task.requiresVerification) {
-        verificationPassed = true;
-      } else {
-        verificationPassed = false;
-        failReason = "❌ Please click the Open/Join link first before verifying.";
+
+      if (!verificationPassed) {
+        return res.status(200).json({ success: false, message: failReason });
       }
+
+      // Securely credit task completion
+      db.completedTasks[userId].push(taskId);
+      user.balanceTM += task.rewardTM;
+
+      // Log transaction
+      db.transactions.unshift({
+        id: `tx_task_${Date.now()}`,
+        userId: userId,
+        type: 'Reward',
+        amountTM: task.rewardTM,
+        amountUSDT: task.rewardTM / db.settings.conversionRate,
+        description: `Task completed: ${task.title}`,
+        createdAt: new Date().toISOString()
+      });
+
+      // Send server-side notification
+      if (!db.notifications) db.notifications = [];
+      db.notifications.unshift({
+        id: `notif_${Date.now()}_task_${taskId}`,
+        userId: userId,
+        title: 'Task Completed! ✅',
+        message: `You completed "${task.title}" and earned +${task.rewardTM} TM!`,
+        type: 'task_completed',
+        createdAt: new Date().toISOString(),
+        read: false
+      });
+
+      // Save DB
+      saveDB(db);
+
+      res.status(200).json({
+        success: true,
+        message: `Successfully verified: ${task.title}! +${task.rewardTM} TM`,
+        db,
+        user
+      });
+    } catch (routeError: any) {
+      console.error("[Task Verification API Error]", routeError);
+      res.status(200).json({ success: false, message: `❌ Server verification error: ${routeError.message || routeError}` });
     }
-
-    if (!verificationPassed) {
-      return res.json({ success: false, message: failReason });
-    }
-
-    // Securely credit task completion
-    db.completedTasks[userId].push(taskId);
-    user.balanceTM += task.rewardTM;
-
-    // Log transaction
-    db.transactions.unshift({
-      id: `tx_task_${Date.now()}`,
-      userId: userId,
-      type: 'Reward',
-      amountTM: task.rewardTM,
-      amountUSDT: task.rewardTM / db.settings.conversionRate,
-      description: `Task completed: ${task.title}`,
-      createdAt: new Date().toISOString()
-    });
-
-    // Send server-side notification
-    if (!db.notifications) db.notifications = [];
-    db.notifications.unshift({
-      id: `notif_${Date.now()}_task_${taskId}`,
-      userId: userId,
-      title: 'Task Completed! ✅',
-      message: `You completed "${task.title}" and earned +${task.rewardTM} TM!`,
-      type: 'task_completed',
-      createdAt: new Date().toISOString(),
-      read: false
-    });
-
-    // Save DB
-    saveDB(db);
-
-    res.json({
-      success: true,
-      message: `Successfully verified: ${task.title}! +${task.rewardTM} TM`,
-      db,
-      user
-    });
   });
 
   // Secure Onboarding Completion

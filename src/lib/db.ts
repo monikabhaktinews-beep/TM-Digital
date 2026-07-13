@@ -604,10 +604,11 @@ export const verifyTaskOnServer = async (
   hasClickedJoin: boolean = false
 ): Promise<{ success: boolean; message: string; db: AppDatabase; user: UserProfile }> => {
   try {
+    const initData = (window as any).Telegram?.WebApp?.initData || '';
     const response = await fetch('/api/tasks/verify', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ userId, taskId, hasClickedJoin })
+      body: JSON.stringify({ userId, taskId, hasClickedJoin, initData })
     });
     if (response.ok) {
       const result = await response.json();

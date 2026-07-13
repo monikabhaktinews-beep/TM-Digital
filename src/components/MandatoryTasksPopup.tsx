@@ -22,6 +22,7 @@ export const MandatoryTasksPopup: React.FC<MandatoryTasksPopupProps> = ({
   const [verifyingTaskId, setVerifyingTaskId] = useState<string | null>(null);
   const [clickedTasks, setClickedTasks] = useState<string[]>([]);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [failedTaskIds, setFailedTaskIds] = useState<string[]>([]);
 
   // Define the exact 3 mandatory tasks we are looking for
   const requiredTaskIds = ["mandatory_channel_1", "mandatory_channel_2", "mandatory_channel_3"];
@@ -57,9 +58,13 @@ export const MandatoryTasksPopup: React.FC<MandatoryTasksPopupProps> = ({
     setVerifyingTaskId(null);
 
     if (result.success) {
+      setFailedTaskIds(prev => prev.filter(id => id !== task.id));
       onUpdateState(result.user, result.db);
       showToast(`Successfully verified: ${task.title}! +${task.rewardTM} TM`, 'success');
     } else {
+      if (!failedTaskIds.includes(task.id)) {
+        setFailedTaskIds(prev => [...prev, task.id]);
+      }
       setErrorMsg(result.message);
       showToast(result.message, 'error');
     }
@@ -224,10 +229,16 @@ export const MandatoryTasksPopup: React.FC<MandatoryTasksPopupProps> = ({
                       <button
                         onClick={() => handleVerifyClick(task)}
                         disabled={isVerifying}
-                        className="text-[10px] font-bold px-3 py-2 bg-amber-500 hover:bg-amber-400 text-tg-dark rounded-lg transition flex items-center justify-center gap-1.5 min-w-[65px] cursor-pointer"
+                        className={`text-[10px] font-bold px-3 py-2 rounded-lg transition flex items-center justify-center gap-1.5 min-w-[65px] cursor-pointer ${
+                          failedTaskIds.includes(task.id)
+                            ? 'bg-red-500 hover:bg-red-400 text-white shadow-md shadow-red-500/20'
+                            : 'bg-amber-500 hover:bg-amber-400 text-tg-dark'
+                        }`}
                       >
                         {isVerifying ? (
-                          <Loader2 className="w-3 h-3 animate-spin text-tg-dark" />
+                          <Loader2 className={`w-3 h-3 animate-spin ${failedTaskIds.includes(task.id) ? 'text-white' : 'text-tg-dark'}`} />
+                        ) : failedTaskIds.includes(task.id) ? (
+                          <span>Retry</span>
                         ) : (
                           <span>Verify</span>
                         )}
