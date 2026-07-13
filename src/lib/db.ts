@@ -591,7 +591,7 @@ export const saveDB = (db: AppDatabase) => {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(db));
   
   // Background server save
-  const url = typeof window !== 'undefined' ? `${window.location.origin}/api/db/save` : '/api/db/save';
+  const url = '/api/db/save';
   fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -606,7 +606,7 @@ export const verifyTaskOnServer = async (
 ): Promise<{ success: boolean; message: string; db: AppDatabase; user: UserProfile }> => {
   try {
     const initData = (window as any).Telegram?.WebApp?.initData || '';
-    const url = typeof window !== 'undefined' ? `${window.location.origin}/api/verify-channel` : '/api/verify-channel';
+    const url = '/api/verify-channel';
     const response = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -648,7 +648,7 @@ export const completeOnboardingOnServer = async (
   userId: string
 ): Promise<{ success: boolean; db: AppDatabase; user: UserProfile }> => {
   try {
-    const url = typeof window !== 'undefined' ? `${window.location.origin}/api/onboarding/complete` : '/api/onboarding/complete';
+    const url = '/api/onboarding/complete';
     const response = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -676,7 +676,7 @@ export const completeOnboardingOnServer = async (
 export const loadDBFromServer = async (userId: string, extraData: any = {}): Promise<AppDatabase> => {
   try {
     const params = new URLSearchParams({ userId, ...extraData });
-    const url = typeof window !== 'undefined' ? `${window.location.origin}/api/db?${params.toString()}` : `/api/db?${params.toString()}`;
+    const url = `/api/db?${params.toString()}`;
     const response = await fetch(url);
     if (response.ok) {
       const db = await response.json();

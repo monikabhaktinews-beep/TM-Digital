@@ -251,6 +251,17 @@ async function startServer() {
   const app = express();
   app.use(express.json());
 
+  // Log all incoming requests to requests.log for debugging
+  app.use((req, res, next) => {
+    const logLine = `[${new Date().toISOString()}] ${req.method} ${req.url} (IP: ${req.ip || req.headers['x-forwarded-for']}) - Headers: ${JSON.stringify(req.headers)}\n`;
+    try {
+      fs.appendFileSync(path.join(process.cwd(), 'requests.log'), logLine, 'utf8');
+    } catch (e) {
+      console.error("Failed to write request log", e);
+    }
+    next();
+  });
+
   // -------------------------------------------------------------
   // SECURE API ENDPOINTS
   // -------------------------------------------------------------
