@@ -49,7 +49,7 @@ export const ReferralTab: React.FC<ReferralTabProps> = ({
           </div>
           <h2 className="text-2xl font-black text-white tracking-tight">Invite & Earn</h2>
           <p className="text-sm text-tg-text-muted max-w-xs mx-auto">
-            Get <strong className="text-emerald-400 font-extrabold">$0.02 USDT</strong> instantly when they join! Plus up to <strong className="text-emerald-400 font-extrabold">$28.00</strong> in tiered deposit commissions.
+            Get up to <strong className="text-emerald-400 font-extrabold">$28.00</strong> in tiered deposit commissions.
           </p>
         </div>
       </div>
