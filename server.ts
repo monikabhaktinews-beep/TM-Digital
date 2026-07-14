@@ -705,6 +705,219 @@ async function startServer() {
     });
   });
 
+  // -------------------------------------------------------------
+  // SECURE GIFT CODE ENDPOINTS
+  // -------------------------------------------------------------
+
+  // Claim Gift Code
+  app.post('/api/gift-code/claim', (req, res) => {
+    const { userId, code } = req.body;
+    if (!userId || !code) {
+      return res.status(400).json({ success: false, error: 'Missing userId or gift code' });
+    }
+
+    const db = getDB();
+    if (!db) {
+      return res.status(500).json({ success: false, error: 'Database error on server' });
+    }
+
+    const user = db.users.find((u: any) => u.id === userId);
+    if (!user) {
+      return res.status(404).json({ success: false, error: 'User not found' });
+    }
+
+    if (!db.giftCodes) {
+      db.giftCodes = [];
+    }
+
+    const cleanedCode = code.trim().toUpperCase();
+    const giftCode = db.giftCodes.find((gc: any) => gc.code.toUpperCase() === cleanedCode);
+
+    if (!giftCode) {
+      return res.status(400).json({ success: false, error: 'Invalid Gift Code. Please check and try again.' });
+    }
+
+    if (!giftCode.isEnabled) {
+      return res.status(400).json({ success: false, error: 'This Gift Code has been disabled.' });
+    }
+
+    if (giftCode.expiryDate && new Date() > new Date(giftCode.expiryDate)) {
+      return res.status(400).json({ success: false, error: 'This Gift Code has expired.' });
+    }
+
+    if (giftCode.claimsCount >= giftCode.maxClaims) {
+      return res.status(400).json({ success: false, error: 'This Gift Code has reached its maximum claims limit.' });
+    }
+
+    if (!giftCode.claimedBy) {
+      giftCode.claimedBy = [];
+    }
+
+    if (giftCode.claimedBy.includes(userId)) {
+      return res.status(400).json({ success: false, error: 'You have already claimed this Gift Code.' });
+    }
+
+    // Process valid claim
+    giftCode.claimsCount += 1;
+    giftCode.claimedBy.push(userId);
+
+    const reward = Number(giftCode.rewardAmount);
+    user.balanceUSDT = Number((user.balanceUSDT + reward).toFixed(4));
+    user.lifetimeEarningsUSDT = Number((user.lifetimeEarningsUSDT + reward).toFixed(4));
+
+    // Create a transaction
+    db.transactions.unshift({
+      id: `tx_gift_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+      userId: userId,
+      type: 'Reward',
+      amountTM: 0,
+      amountUSDT: reward,
+      description: `Gift Code Claimed: ${giftCode.code}`,
+      createdAt: new Date().toISOString()
+    });
+
+    // Create a notification
+    if (!db.notifications) {
+      db.notifications = [];
+    }
+    db.notifications.unshift({
+      id: `notif_gift_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+      userId: userId,
+      title: 'Gift Code Claimed! 🎁',
+      message: `Successfully claimed code ${giftCode.code}! received +$${reward.toFixed(2)} USDT.`,
+      type: 'task_completed',
+      createdAt: new Date().toISOString(),
+      read: false
+    });
+
+    saveDB(db);
+
+    res.json({
+      success: true,
+      message: `Successfully claimed! +$${reward.toFixed(2)} USDT credited to your balance.`,
+      db,
+      user
+    });
+  });
+
+  // Generate Gift Codes
+  app.post('/api/gift-code/generate', (req, res) => {
+    const { rewardAmount, count, maxClaims, expiryDate } = req.body;
+    
+    const countVal = Math.min(100, Math.max(1, Number(count) || 1));
+    const rewardVal = Number(rewardAmount) || 0.01;
+    const maxClaimsVal = Number(maxClaims) || 1;
+
+    const db = getDB();
+    if (!db) {
+      return res.status(500).json({ success: false, error: 'Database error on server' });
+    }
+
+    if (!db.giftCodes) {
+      db.giftCodes = [];
+    }
+
+    const existingCodes = new Set(db.giftCodes.map((gc: any) => gc.code));
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+
+    const generateUniqueCode = () => {
+      let code = '';
+      do {
+        const part1 = Array.from({ length: 4 }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
+        const part2 = Array.from({ length: 4 }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
+        code = `TM-GFT-${part1}-${part2}`;
+      } while (existingCodes.has(code));
+      return code;
+    };
+
+    const newCodes = [];
+    for (let i = 0; i < countVal; i++) {
+      const codeStr = generateUniqueCode();
+      existingCodes.add(codeStr);
+
+      const giftObj = {
+        code: codeStr,
+        rewardAmount: rewardVal,
+        maxClaims: maxClaimsVal,
+        claimsCount: 0,
+        expiryDate: expiryDate ? new Date(expiryDate).toISOString() : undefined,
+        isEnabled: true,
+        createdAt: new Date().toISOString(),
+        claimedBy: []
+      };
+      db.giftCodes.push(giftObj);
+      newCodes.push(giftObj);
+    }
+
+    saveDB(db);
+    res.json({ success: true, db, newCodes });
+  });
+
+  // Toggle Gift Code status
+  app.post('/api/gift-code/toggle', (req, res) => {
+    const { code, isEnabled } = req.body;
+    if (!code) {
+      return res.status(400).json({ success: false, error: 'Missing code' });
+    }
+
+    const db = getDB();
+    if (!db) {
+      return res.status(500).json({ success: false, error: 'Database error' });
+    }
+
+    if (!db.giftCodes) {
+      db.giftCodes = [];
+    }
+
+    const giftCode = db.giftCodes.find((gc: any) => gc.code === code);
+    if (giftCode) {
+      giftCode.isEnabled = !!isEnabled;
+      saveDB(db);
+    }
+
+    res.json({ success: true, db });
+  });
+
+  // Delete Gift Code
+  app.post('/api/gift-code/delete', (req, res) => {
+    const { code } = req.body;
+    if (!code) {
+      return res.status(400).json({ success: false, error: 'Missing code' });
+    }
+
+    const db = getDB();
+    if (!db) {
+      return res.status(500).json({ success: false, error: 'Database error' });
+    }
+
+    if (db.giftCodes) {
+      db.giftCodes = db.giftCodes.filter((gc: any) => gc.code !== code);
+      saveDB(db);
+    }
+
+    res.json({ success: true, db });
+  });
+
+  // Delete Batch of Gift Codes
+  app.post('/api/gift-code/delete-batch', (req, res) => {
+    const { codes } = req.body;
+    if (!codes || !Array.isArray(codes)) {
+      return res.status(400).json({ success: false, error: 'Missing codes array' });
+    }
+
+    const db = getDB();
+    if (!db) {
+      return res.status(500).json({ success: false, error: 'Database error' });
+    }
+
+    if (db.giftCodes) {
+      db.giftCodes = db.giftCodes.filter((gc: any) => !codes.includes(gc.code));
+      saveDB(db);
+    }
+
+    res.json({ success: true, db });
+  });
+
   // Reset database for developer testing
   app.post('/api/db/reset', (req, res) => {
     if (fs.existsSync(DB_FILE)) {

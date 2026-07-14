@@ -6,7 +6,7 @@ import TasksTab from './components/TasksTab';
 import DepositTab from './components/DepositTab';
 import WithdrawTab from './components/WithdrawTab';
 import { ProfileTab } from './components/ProfileTab';
-import { ReferralTab } from './components/ReferralTab';
+import { GiftCodeTab } from './components/GiftCodeTab';
 import SupportTab from './components/SupportTab';
 import AdminPanel from './components/AdminPanel';
 import { MandatoryTasksPopup } from './components/MandatoryTasksPopup';
@@ -374,8 +374,8 @@ export default function App() {
               />
             )}
 
-            {activeTab === 'referral' && (
-              <ReferralTab 
+            {activeTab === 'giftCode' && (
+              <GiftCodeTab 
                 user={userProfile} 
                 db={db} 
                 onUpdateState={handleStateUpdate} 
@@ -469,10 +469,10 @@ export default function App() {
       <nav className="fixed bottom-4 inset-x-4 glass-panel border border-white/10 py-2 px-1 z-40 max-w-md mx-auto flex justify-around items-center rounded-2xl shadow-2xl shadow-black/70 bg-tg-surface/90 backdrop-blur-xl">
         {[
           { id: 'profile', label: 'Home', icon: Home, lockable: true },
+          { id: 'giftCode', label: 'Gift Code', icon: Gift, lockable: true },
           { id: 'tasks', label: 'Tasks', icon: CheckSquare },
           { id: 'deposit', label: 'Deposit', icon: ArrowDownLeft, lockable: true },
           { id: 'withdraw', label: 'Withdraw', icon: ArrowUpRight, lockable: true },
-          { id: 'referral', label: 'Invite', icon: Gift, lockable: true },
           { id: 'support', label: 'Support', icon: HelpCircle, lockable: true }
         ].map((tab) => {
           const Icon = tab.icon;

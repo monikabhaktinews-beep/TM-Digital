@@ -189,6 +189,18 @@ export interface AppDatabase {
   taskSubmissions: TaskSubmission[];
   notifications?: UserNotification[]; // Persisted notification center alert logs
   lastInterestPayout?: string; // ISO string of last automatic interest settlement
+  giftCodes?: GiftCode[]; // Gift codes list
+}
+
+export interface GiftCode {
+  code: string;
+  rewardAmount: number;
+  maxClaims: number;
+  claimsCount: number;
+  expiryDate?: string; // Optional expiry date
+  isEnabled: boolean;
+  createdAt: string;
+  claimedBy: string[]; // List of user IDs who claimed this code
 }
 
 declare global {

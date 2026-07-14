@@ -39,10 +39,16 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const [userSearchQuery, setUserSearchQuery] = useState('');
   const [selectedUser, setSelectedUser] = useState<UserProfile | null>(null);
 
-  // Referral Management states
-  const [referralSearchQuery, setReferralSearchQuery] = useState('');
-  const [referralFilter, setReferralFilter] = useState<'all' | 'successful' | 'unsuccessful'>('all');
-  const [selectedReferral, setSelectedReferral] = useState<{ referrer: UserProfile; invitee: UserProfile } | null>(null);
+  // Gift Code Management states
+  const [giftRewardAmount, setGiftRewardAmount] = useState<string>('1.00');
+  const [giftCodesCount, setGiftCodesCount] = useState<number>(10);
+  const [giftMaxClaims, setGiftMaxClaims] = useState<number>(1);
+  const [giftExpiryDate, setGiftExpiryDate] = useState<string>('');
+  const [giftSearchQuery, setGiftSearchQuery] = useState<string>('');
+  const [selectedGiftCodes, setSelectedGiftCodes] = useState<string[]>([]);
+  const [isGenerating, setIsGenerating] = useState<boolean>(false);
+  const [newlyGeneratedCodes, setNewlyGeneratedCodes] = useState<string[]>([]);
+  const [hasCopiedNewCodes, setHasCopiedNewCodes] = useState<boolean>(false);
 
   // Manual Adjustments Form
   const [adjustTM, setAdjustTM] = useState('');
@@ -232,7 +238,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
           {[
             { id: 'dashboard', label: 'Overview Metrics', icon: BarChart2 },
             { id: 'users', label: 'User Database', icon: Users },
-            { id: 'referrals', label: 'Referral Logs', icon: Gift },
+            { id: 'referrals', label: 'Gift Code Manager', icon: Gift },
             { id: 'transfers', label: 'Transfer History', icon: RefreshCw },
             { id: 'requests', label: 'Requests & Submissions', icon: Clipboard, badge: pendingDeposits.length + pendingWithdrawals.length + pendingSubmissions.length },
             { id: 'tasks', label: 'Tasks & Channels', icon: Sliders },
@@ -567,72 +573,161 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
             </div>
           )}
 
-          {/* REFERRAL LOGS MANAGEMENT */}
+          {/* GIFT CODE MANAGER SECTION */}
           {activeTab === 'referrals' && (() => {
-            // Find all referred users (where referredBy is set)
-            const allReferred = db.users.filter(u => u.referredBy);
-            
-            // Metrics
-            const totalReferralsCount = allReferred.length;
-            const successfulReferralsCount = allReferred.filter(u => u.referralCounted).length;
-            const failedReferralsCount = totalReferralsCount - successfulReferralsCount; // Incomplete / Pending
-            const totalTMDistributed = successfulReferralsCount * 100; // 100 TM per successful referral
+            const giftCodes = db.giftCodes || [];
+
+            // Computations
+            const totalCodes = giftCodes.length;
+            const activeCodesCount = giftCodes.filter(gc => gc.isEnabled && (!gc.expiryDate || new Date() < new Date(gc.expiryDate))).length;
+            const totalClaimsCount = giftCodes.reduce((sum, gc) => sum + (gc.claimsCount || 0), 0);
+            const remainingCodesCount = giftCodes.filter(gc => gc.isEnabled && (gc.claimsCount < gc.maxClaims) && (!gc.expiryDate || new Date() < new Date(gc.expiryDate))).length;
+            const totalUSDTDistributed = giftCodes.reduce((sum, gc) => sum + ((gc.claimsCount || 0) * (gc.rewardAmount || 0)), 0);
 
             // Filtering & Searching
-            const filtered = allReferred.filter(invitee => {
-              const referrer = db.users.find(u => u.id === invitee.referredBy);
-              
-              // Filter status
-              if (referralFilter === 'successful' && !invitee.referralCounted) return false;
-              if (referralFilter === 'unsuccessful' && invitee.referralCounted) return false;
-
-              // Search query
-              if (referralSearchQuery.trim()) {
-                const query = referralSearchQuery.toLowerCase();
-                const inviteeName = (invitee.firstName + ' ' + (invitee.lastName || '')).toLowerCase();
-                const inviteeUsername = (invitee.username || '').toLowerCase();
-                const inviteeId = invitee.id;
-                
-                const referrerName = referrer ? (referrer.firstName + ' ' + (referrer.lastName || '')).toLowerCase() : '';
-                const referrerUsername = referrer ? (referrer.username || '').toLowerCase() : '';
-                const referrerId = referrer ? referrer.id : '';
-
-                return (
-                  inviteeName.includes(query) ||
-                  inviteeUsername.includes(query) ||
-                  inviteeId.includes(query) ||
-                  referrerName.includes(query) ||
-                  referrerUsername.includes(query) ||
-                  referrerId.includes(query)
-                );
+            const filteredCodes = giftCodes.filter(gc => {
+              if (giftSearchQuery.trim()) {
+                const query = giftSearchQuery.toLowerCase();
+                return gc.code.toLowerCase().includes(query);
               }
               return true;
-            });
+            }).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
-            // Sort newest first
-            const sortedFiltered = [...filtered].sort(
-              (a, b) => new Date(b.registeredAt).getTime() - new Date(a.registeredAt).getTime()
-            );
+            // Actions handlers
+            const handleGenerateCodes = async (e: React.FormEvent) => {
+              e.preventDefault();
+              setIsGenerating(true);
+              setNewlyGeneratedCodes([]);
+              setHasCopiedNewCodes(false);
+              try {
+                const response = await fetch('/api/gift-code/generate', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    rewardAmount: Number(giftRewardAmount) || 0.1,
+                    count: Math.min(100, Math.max(1, Number(giftCodesCount) || 1)),
+                    maxClaims: Number(giftMaxClaims) || 1,
+                    expiryDate: giftExpiryDate || undefined
+                  })
+                });
+                const data = await response.json();
+                if (data.success) {
+                  onDbUpdate(data.db);
+                  const codesList = (data.newCodes || []).map((gc: any) => gc.code);
+                  setNewlyGeneratedCodes(codesList);
+                  setGiftExpiryDate('');
+                  
+                  // Auto-copy to clipboard
+                  if (codesList.length > 0) {
+                    try {
+                      await navigator.clipboard.writeText(codesList.join('\n'));
+                      setHasCopiedNewCodes(true);
+                      alert(`Successfully generated ${codesList.length} unique gift codes!\n\nAll ${codesList.length} new codes have been copied to your clipboard!`);
+                    } catch (clipErr) {
+                      console.error(clipErr);
+                      alert(`Successfully generated ${codesList.length} unique gift codes! Check the popup to copy them.`);
+                    }
+                  } else {
+                    alert(`Successfully generated ${giftCodesCount} unique gift codes!`);
+                  }
+                } else {
+                  alert(data.error || 'Failed to generate gift codes.');
+                }
+              } catch (err) {
+                console.error(err);
+                alert('Connection error.');
+              } finally {
+                setIsGenerating(false);
+              }
+            };
 
-            // Export to CSV Function
+            const handleToggleCode = async (code: string, isEnabled: boolean) => {
+              try {
+                const response = await fetch('/api/gift-code/toggle', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ code, isEnabled })
+                });
+                const data = await response.json();
+                if (data.success) {
+                  onDbUpdate(data.db);
+                }
+              } catch (err) {
+                console.error(err);
+              }
+            };
+
+            const handleDeleteCode = async (code: string) => {
+              if (!confirm(`Are you sure you want to delete code: ${code}?`)) return;
+              try {
+                const response = await fetch('/api/gift-code/delete', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ code })
+                });
+                const data = await response.json();
+                if (data.success) {
+                  onDbUpdate(data.db);
+                  setSelectedGiftCodes(prev => prev.filter(c => c !== code));
+                }
+              } catch (err) {
+                console.error(err);
+              }
+            };
+
+            const handleDeleteBatch = async () => {
+              if (selectedGiftCodes.length === 0) return;
+              if (!confirm(`Are you sure you want to delete ${selectedGiftCodes.length} selected gift codes?`)) return;
+              try {
+                const response = await fetch('/api/gift-code/delete-batch', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ codes: selectedGiftCodes })
+                });
+                const data = await response.json();
+                if (data.success) {
+                  onDbUpdate(data.db);
+                  setSelectedGiftCodes([]);
+                  alert('Selected codes deleted successfully!');
+                }
+              } catch (err) {
+                console.error(err);
+              }
+            };
+
+            const handleCopyCode = (code: string) => {
+              navigator.clipboard.writeText(code);
+              alert(`Copied: ${code}`);
+            };
+
+            const handleCopyAllCodes = () => {
+              if (filteredCodes.length === 0) return;
+              const allCodesStr = filteredCodes.map(gc => gc.code).join('\n');
+              navigator.clipboard.writeText(allCodesStr);
+              alert(`Successfully copied all ${filteredCodes.length} visible gift codes to clipboard!`);
+            };
+
             const handleExportCSV = () => {
-              const headers = ['Invitee ID', 'Invitee Username', 'Invitee Name', 'Referrer ID', 'Referrer Username', 'Referrer Name', 'Registration Date', 'Status', 'Reward Distributed (TM)'];
+              if (giftCodes.length === 0) {
+                alert('No codes to export.');
+                return;
+              }
+              const headers = ['Gift Code', 'Reward Amount (USDT)', 'Max Claims', 'Claims Count', 'Remaining Claims', 'Status', 'Expiry Date', 'Created At'];
               const csvRows = [headers.join(',')];
               
-              allReferred.forEach(invitee => {
-                const referrer = db.users.find(u => u.id === invitee.referredBy);
-                const status = invitee.referralCounted ? 'Successful' : 'Unsuccessful/Pending';
-                const reward = invitee.referralCounted ? 100 : 0;
+              giftCodes.forEach(gc => {
+                const status = gc.isEnabled ? 'Enabled' : 'Disabled';
+                const remaining = gc.maxClaims - gc.claimsCount;
+                const expiry = gc.expiryDate ? new Date(gc.expiryDate).toISOString() : 'None';
                 const row = [
-                  invitee.id,
-                  invitee.username || '',
-                  `"${invitee.firstName.replace(/"/g, '""')}"`,
-                  referrer?.id || '',
-                  referrer?.username || '',
-                  referrer ? `"${referrer.firstName.replace(/"/g, '""')}"` : '',
-                  invitee.registeredAt || '',
+                  gc.code,
+                  gc.rewardAmount,
+                  gc.maxClaims,
+                  gc.claimsCount,
+                  remaining,
                   status,
-                  reward
+                  expiry,
+                  new Date(gc.createdAt).toISOString()
                 ];
                 csvRows.push(row.join(','));
               });
@@ -641,161 +736,292 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
               const url = URL.createObjectURL(blob);
               const link = document.createElement('a');
               link.setAttribute('href', url);
-              link.setAttribute('download', `TM_Digital_Referrals_Report_${new Date().toISOString().split('T')[0]}.csv`);
+              link.setAttribute('download', `TM_Digital_GiftCodes_Report_${new Date().toISOString().split('T')[0]}.csv`);
               link.style.visibility = 'hidden';
               document.body.appendChild(link);
               link.click();
               document.body.removeChild(link);
             };
 
+            const handleSelectAll = (e: React.ChangeEvent<HTMLInputElement>) => {
+              if (e.target.checked) {
+                setSelectedGiftCodes(filteredCodes.map(gc => gc.code));
+              } else {
+                setSelectedGiftCodes([]);
+              }
+            };
+
+            const handleSelectCode = (code: string, checked: boolean) => {
+              if (checked) {
+                setSelectedGiftCodes(prev => [...prev, code]);
+              } else {
+                setSelectedGiftCodes(prev => prev.filter(c => c !== code));
+              }
+            };
+
             return (
-              <div className="space-y-4 animate-fadeIn">
-                {/* Metrics Cards */}
-                <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+              <div className="space-y-6 animate-fadeIn">
+                {/* Stats Grid */}
+                <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
                   <div className="glass-panel p-4 rounded-xl border border-white/5 bg-tg-surface/30">
-                    <span className="text-[9px] text-tg-text-muted uppercase tracking-wider font-bold block">Total Referrals</span>
-                    <span className="text-xl font-bold text-white font-mono">{totalReferralsCount}</span>
-                    <p className="text-[9px] text-tg-text-muted">Cumulative referred users</p>
+                    <span className="text-[10px] text-tg-text-muted uppercase tracking-wider font-bold block">Total Codes</span>
+                    <span className="text-xl font-extrabold text-white font-mono mt-1 block">{totalCodes}</span>
                   </div>
                   
                   <div className="glass-panel p-4 rounded-xl border border-white/5 bg-emerald-500/5">
-                    <span className="text-[9px] text-emerald-400 uppercase tracking-wider font-bold block">Successful Referrals</span>
-                    <span className="text-xl font-bold text-emerald-400 font-mono">{successfulReferralsCount}</span>
-                    <p className="text-[9px] text-tg-text-muted">Verified & tasks completed</p>
+                    <span className="text-[10px] text-emerald-400 uppercase tracking-wider font-bold block">Active Codes</span>
+                    <span className="text-xl font-extrabold text-emerald-400 font-mono mt-1 block">{activeCodesCount}</span>
                   </div>
 
-                  <div className="glass-panel p-4 rounded-xl border border-white/5 bg-red-500/5">
-                    <span className="text-[9px] text-red-400 uppercase tracking-wider font-bold block">Failed / Pending</span>
-                    <span className="text-xl font-bold text-red-400 font-mono">{failedReferralsCount}</span>
-                    <p className="text-[9px] text-tg-text-muted">Incomplete/pending tasks</p>
+                  <div className="glass-panel p-4 rounded-xl border border-white/5 bg-amber-500/5">
+                    <span className="text-[10px] text-amber-400 uppercase tracking-wider font-bold block">Claimed Codes</span>
+                    <span className="text-xl font-extrabold text-amber-400 font-mono mt-1 block">{totalClaimsCount}</span>
+                  </div>
+
+                  <div className="glass-panel p-4 rounded-xl border border-white/5 bg-purple-500/5">
+                    <span className="text-[10px] text-purple-400 uppercase tracking-wider font-bold block">Remaining Codes</span>
+                    <span className="text-xl font-extrabold text-purple-400 font-mono mt-1 block">{remainingCodesCount}</span>
                   </div>
 
                   <div className="glass-panel p-4 rounded-xl border border-white/5 bg-tg-blue/5">
-                    <span className="text-[9px] text-tg-blue-light uppercase tracking-wider font-bold block">Total TM Distributed</span>
-                    <span className="text-xl font-bold text-tg-blue-light font-mono">{totalTMDistributed.toLocaleString()} TM</span>
-                    <p className="text-[9px] text-tg-text-muted">Earned referral rewards</p>
+                    <span className="text-[10px] text-tg-blue-light uppercase tracking-wider font-bold block">Total USDT Distributed</span>
+                    <span className="text-xl font-extrabold text-tg-blue-light font-mono mt-1 block">${totalUSDTDistributed.toFixed(2)}</span>
                   </div>
                 </div>
 
-                {/* Filters, Search & Export Actions */}
-                <div className="glass-panel p-4 rounded-xl border border-white/5 flex flex-col md:flex-row md:items-center justify-between gap-3 bg-tg-surface/20">
+                {/* Code Generation Form */}
+                <div className="glass-panel p-5 rounded-2xl border border-white/5 bg-tg-surface/10 space-y-4">
+                  <div className="flex items-center gap-2 border-b border-white/5 pb-2">
+                    <Gift className="w-5 h-5 text-purple-400" />
+                    <h3 className="font-bold text-white text-sm font-display">Generate Bulk Unique Gift Codes</h3>
+                  </div>
+
+                  <form onSubmit={handleGenerateCodes} className="grid grid-cols-1 sm:grid-cols-4 gap-4 items-end text-xs">
+                    <div className="space-y-1">
+                      <label className="text-[10px] text-tg-text-muted uppercase font-bold">Reward Amount (USDT)</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0.01"
+                        placeholder="1.00"
+                        value={giftRewardAmount}
+                        onChange={(e) => setGiftRewardAmount(e.target.value)}
+                        className="w-full bg-tg-dark/50 border border-white/5 focus:border-tg-blue/40 rounded-xl px-3.5 py-2.5 text-white focus:outline-none"
+                        required
+                      />
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-[10px] text-tg-text-muted uppercase font-bold">Number of Codes (1–100)</label>
+                      <input
+                        type="number"
+                        min="1"
+                        max="100"
+                        value={giftCodesCount}
+                        onChange={(e) => setGiftCodesCount(Number(e.target.value) || 1)}
+                        className="w-full bg-tg-dark/50 border border-white/5 focus:border-tg-blue/40 rounded-xl px-3.5 py-2.5 text-white focus:outline-none"
+                        required
+                      />
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-[10px] text-tg-text-muted uppercase font-bold">Max Claims per Code</label>
+                      <input
+                        type="number"
+                        min="1"
+                        value={giftMaxClaims}
+                        onChange={(e) => setGiftMaxClaims(Number(e.target.value) || 1)}
+                        className="w-full bg-tg-dark/50 border border-white/5 focus:border-tg-blue/40 rounded-xl px-3.5 py-2.5 text-white focus:outline-none"
+                        required
+                      />
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-[10px] text-tg-text-muted uppercase font-bold">Expiry Date (Optional)</label>
+                      <input
+                        type="date"
+                        value={giftExpiryDate}
+                        onChange={(e) => setGiftExpiryDate(e.target.value)}
+                        className="w-full bg-tg-dark/50 border border-white/5 focus:border-tg-blue/40 rounded-xl px-3.5 py-2 text-white focus:outline-none"
+                      />
+                    </div>
+
+                    <div className="sm:col-span-4 pt-2">
+                      <button
+                        type="submit"
+                        disabled={isGenerating}
+                        className="w-full bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 text-white font-bold text-xs py-3 rounded-xl transition cursor-pointer flex items-center justify-center gap-1.5"
+                      >
+                        {isGenerating ? (
+                          <span>Generating Secure Codes...</span>
+                        ) : (
+                          <>
+                            <Plus className="w-4 h-4" />
+                            <span>Generate {giftCodesCount} Codes Instantly</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  </form>
+                </div>
+
+                {/* Search & Bulk Operations */}
+                <div className="glass-panel p-4 rounded-xl border border-white/5 flex flex-col md:flex-row md:items-center justify-between gap-3 bg-tg-surface/20 text-xs">
                   <div className="flex flex-1 flex-col sm:flex-row gap-2">
-                    {/* Search query */}
                     <div className="relative flex-1">
                       <Search className="absolute left-3 top-2.5 h-4 w-4 text-tg-text-muted" />
                       <input
                         type="text"
-                        placeholder="Search invitee or referrer username/ID..."
-                        value={referralSearchQuery}
-                        onChange={(e) => setReferralSearchQuery(e.target.value)}
-                        className="w-full bg-tg-dark/40 border border-white/5 rounded-xl pl-9 pr-4 py-2 text-xs text-white placeholder-tg-text-muted focus:outline-none focus:border-tg-blue/30"
+                        placeholder="Search gift codes..."
+                        value={giftSearchQuery}
+                        onChange={(e) => setGiftSearchQuery(e.target.value)}
+                        className="w-full bg-tg-dark/40 border border-white/5 rounded-xl pl-9 pr-4 py-2 text-xs text-white placeholder-tg-text-muted focus:outline-none"
                       />
                     </div>
 
-                    {/* Quick filter segmented selector */}
-                    <div className="flex items-center gap-1 bg-tg-dark/50 border border-white/5 rounded-xl p-0.5 self-start">
-                      {([
-                        { id: 'all', label: 'All' },
-                        { id: 'successful', label: 'Successful' },
-                        { id: 'unsuccessful', label: 'Incomplete' }
-                      ] as const).map((opt) => (
-                        <button
-                          key={opt.id}
-                          onClick={() => setReferralFilter(opt.id)}
-                          className={`px-3 py-1.5 text-[10px] font-bold rounded-lg transition capitalize cursor-pointer ${
-                            referralFilter === opt.id 
-                              ? 'bg-tg-blue text-white' 
-                              : 'text-tg-text-muted hover:text-white'
-                          }`}
-                        >
-                          {opt.label}
-                        </button>
-                      ))}
-                    </div>
+                    {selectedGiftCodes.length > 0 && (
+                      <button
+                        onClick={handleDeleteBatch}
+                        className="bg-red-600 hover:bg-red-500 text-white font-bold rounded-xl py-2 px-4 transition flex items-center justify-center gap-1.5 cursor-pointer"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                        <span>Delete Selected ({selectedGiftCodes.length})</span>
+                      </button>
+                    )}
                   </div>
 
-                  {/* CSV Export Button */}
-                  <button
-                    onClick={handleExportCSV}
-                    className="bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl py-2 px-3 text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer shrink-0"
-                  >
-                    <Download className="w-4 h-4" />
-                    <span>Export Logs (CSV)</span>
-                  </button>
+                  <div className="flex gap-2 self-stretch md:self-auto justify-end">
+                    <button
+                      onClick={handleCopyAllCodes}
+                      disabled={filteredCodes.length === 0}
+                      className="bg-tg-surface-light border border-white/5 text-white hover:bg-white/5 font-bold rounded-xl py-2 px-3 transition flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+                    >
+                      <Clipboard className="w-4 h-4" />
+                      <span>Copy All Codes</span>
+                    </button>
+
+                    <button
+                      onClick={handleExportCSV}
+                      disabled={giftCodes.length === 0}
+                      className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl py-2 px-3 transition flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+                    >
+                      <Download className="w-4 h-4" />
+                      <span>Export CSV</span>
+                    </button>
+                  </div>
                 </div>
 
-                {/* Referral List Table */}
+                {/* Gift Code List Table */}
                 <div className="glass-panel rounded-xl border border-white/5 overflow-hidden">
                   <div className="overflow-x-auto">
                     <table className="w-full text-xs text-left text-tg-text-muted">
                       <thead className="text-[10px] uppercase font-bold text-tg-text-muted bg-tg-surface-light border-b border-white/5">
                         <tr>
-                          <th className="px-4 py-3">Invitee (Joined User)</th>
-                          <th className="px-4 py-3">Referrer (Invited By)</th>
-                          <th className="px-4 py-3">Registration Date</th>
-                          <th className="px-4 py-3">Status</th>
+                          <th className="px-4 py-3 w-10 text-center">
+                            <input
+                              type="checkbox"
+                              checked={filteredCodes.length > 0 && selectedGiftCodes.length === filteredCodes.length}
+                              onChange={handleSelectAll}
+                              className="rounded border-white/10 bg-black/40 text-purple-600 focus:ring-0 cursor-pointer"
+                            />
+                          </th>
+                          <th className="px-4 py-3">Gift Code</th>
                           <th className="px-4 py-3">Reward</th>
+                          <th className="px-4 py-3">Claims (Max)</th>
+                          <th className="px-4 py-3">Expiry Date</th>
+                          <th className="px-4 py-3">Status</th>
                           <th className="px-4 py-3 text-center">Actions</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-white/5">
-                        {sortedFiltered.length === 0 ? (
+                        {filteredCodes.length === 0 ? (
                           <tr>
-                            <td colSpan={6} className="text-center py-8 text-tg-text-muted font-medium">
-                              No referral entries found matching filters.
+                            <td colSpan={7} className="text-center py-8 text-tg-text-muted font-medium">
+                              No gift codes found matching search.
                             </td>
                           </tr>
                         ) : (
-                          sortedFiltered.map((invitee) => {
-                            const referrer = db.users.find(u => u.id === invitee.referredBy);
+                          filteredCodes.map((gc) => {
+                            const isExpired = gc.expiryDate && new Date() > new Date(gc.expiryDate);
+                            const isSelected = selectedGiftCodes.includes(gc.code);
                             return (
-                              <tr key={invitee.id} className="hover:bg-white/[0.01] transition duration-200">
+                              <tr key={gc.code} className="hover:bg-white/[0.01] transition duration-200">
+                                <td className="px-4 py-3 text-center">
+                                  <input
+                                    type="checkbox"
+                                    checked={isSelected}
+                                    onChange={(e) => handleSelectCode(gc.code, e.target.checked)}
+                                    className="rounded border-white/10 bg-black/40 text-purple-600 focus:ring-0 cursor-pointer"
+                                  />
+                                </td>
                                 <td className="px-4 py-3">
-                                  <div className="flex items-center gap-2.5">
-                                    <img src={invitee.photoUrl} alt={invitee.firstName} className="w-7 h-7 rounded-full border border-white/5" referrerPolicy="no-referrer" />
-                                    <div>
-                                      <span className="font-bold text-white block">{invitee.firstName} {invitee.lastName || ''}</span>
-                                      <span className="text-[10px] text-tg-blue-light block font-mono">@{invitee.username || invitee.id}</span>
-                                    </div>
+                                  <div className="flex items-center gap-2">
+                                    <span className="font-mono font-bold text-white tracking-wider select-all">{gc.code}</span>
+                                    <button
+                                      onClick={() => handleCopyCode(gc.code)}
+                                      className="p-1 hover:bg-white/5 rounded text-tg-text-muted hover:text-white transition cursor-pointer"
+                                      title="Copy Code"
+                                    >
+                                      <Clipboard className="w-3.5 h-3.5" />
+                                    </button>
                                   </div>
                                 </td>
-                                <td className="px-4 py-3">
-                                  {referrer ? (
-                                    <div className="flex items-center gap-2.5">
-                                      <img src={referrer.photoUrl} alt={referrer.firstName} className="w-7 h-7 rounded-full border border-white/5" referrerPolicy="no-referrer" />
-                                      <div>
-                                        <span className="font-bold text-white block">{referrer.firstName}</span>
-                                        <span className="text-[10px] text-tg-blue-light block font-mono">@{referrer.username || referrer.id}</span>
-                                      </div>
-                                    </div>
-                                  ) : (
-                                    <span className="text-red-400 font-bold font-mono">ID: {invitee.referredBy} (Deleted)</span>
-                                  )}
+                                <td className="px-4 py-3 font-bold text-emerald-400 font-mono">
+                                  ${gc.rewardAmount.toFixed(2)} USDT
+                                </td>
+                                <td className="px-4 py-3 font-mono">
+                                  <span className="text-white font-bold">{gc.claimsCount}</span>
+                                  <span className="text-tg-text-muted"> / {gc.maxClaims}</span>
                                 </td>
                                 <td className="px-4 py-3 font-mono text-[10px]">
-                                  {new Date(invitee.registeredAt).toLocaleString()}
-                                </td>
-                                <td className="px-4 py-3">
-                                  {invitee.referralCounted ? (
-                                    <span className="bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[9px] px-2 py-0.5 rounded font-extrabold uppercase">
-                                      Successful
+                                  {gc.expiryDate ? (
+                                    <span className={isExpired ? 'text-red-400 font-bold' : 'text-gray-400'}>
+                                      {new Date(gc.expiryDate).toLocaleDateString()}
                                     </span>
                                   ) : (
+                                    <span className="text-tg-text-muted">Never</span>
+                                  )}
+                                </td>
+                                <td className="px-4 py-3">
+                                  {isExpired ? (
                                     <span className="bg-red-500/10 text-red-400 border border-red-500/20 text-[9px] px-2 py-0.5 rounded font-extrabold uppercase">
-                                      Incomplete
+                                      Expired
+                                    </span>
+                                  ) : gc.claimsCount >= gc.maxClaims ? (
+                                    <span className="bg-amber-500/10 text-amber-400 border border-amber-500/20 text-[9px] px-2 py-0.5 rounded font-extrabold uppercase">
+                                      Fully Claimed
+                                    </span>
+                                  ) : gc.isEnabled ? (
+                                    <span className="bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[9px] px-2 py-0.5 rounded font-extrabold uppercase">
+                                      Active
+                                    </span>
+                                  ) : (
+                                    <span className="bg-white/5 text-tg-text-muted border border-white/10 text-[9px] px-2 py-0.5 rounded font-extrabold uppercase">
+                                      Disabled
                                     </span>
                                   )}
                                 </td>
-                                <td className="px-4 py-3 font-bold text-white font-mono">
-                                  {invitee.referralCounted ? '100 TM' : '0 TM'}
-                                </td>
-                                <td className="px-4 py-3 text-center">
-                                  <button
-                                    onClick={() => setSelectedReferral({ referrer: referrer || invitee, invitee })}
-                                    className="bg-tg-blue hover:bg-tg-blue-light text-white rounded-lg px-2.5 py-1 text-[10px] font-bold transition cursor-pointer"
-                                  >
-                                    View Details
-                                  </button>
+                                <td className="px-4 py-3">
+                                  <div className="flex items-center justify-center gap-2">
+                                    <button
+                                      onClick={() => handleToggleCode(gc.code, !gc.isEnabled)}
+                                      disabled={isExpired || gc.claimsCount >= gc.maxClaims}
+                                      className={`px-2 py-1 rounded text-[10px] font-bold transition cursor-pointer border ${
+                                        gc.isEnabled
+                                          ? 'bg-amber-500/10 text-amber-400 border-amber-500/20 hover:bg-amber-500/20'
+                                          : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20 hover:bg-emerald-500/20'
+                                      } disabled:opacity-30 disabled:pointer-events-none`}
+                                    >
+                                      {gc.isEnabled ? 'Disable' : 'Enable'}
+                                    </button>
+                                    <button
+                                      onClick={() => handleDeleteCode(gc.code)}
+                                      className="bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 rounded p-1 transition cursor-pointer"
+                                      title="Delete Code"
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                    </button>
+                                  </div>
                                 </td>
                               </tr>
                             );
@@ -806,86 +1032,65 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                   </div>
                 </div>
 
-                {/* Referral Details Modal Overlay */}
-                {selectedReferral && (
+                {/* Newly Generated Codes Modal Overlay */}
+                {newlyGeneratedCodes.length > 0 && (
                   <div className="fixed inset-0 z-[110] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-                    <div className="w-full max-w-lg glass-panel p-6 rounded-2xl border border-white/10 space-y-5 bg-tg-surface text-tg-text">
+                    <div className="w-full max-w-md glass-panel p-6 rounded-2xl border border-white/10 space-y-4 bg-tg-surface text-tg-text">
                       <div className="flex items-center justify-between border-b border-white/5 pb-3">
-                        <h4 className="font-bold text-white font-display text-base">Referral Connection Insights</h4>
+                        <div className="flex items-center gap-2">
+                          <Gift className="w-5 h-5 text-purple-400" />
+                          <h4 className="font-bold text-white font-display text-base">Newly Generated Codes ({newlyGeneratedCodes.length})</h4>
+                        </div>
                         <button
-                          onClick={() => setSelectedReferral(null)}
-                          className="text-tg-text-muted hover:text-white transition text-xs font-bold"
+                          onClick={() => {
+                            setNewlyGeneratedCodes([]);
+                            setHasCopiedNewCodes(false);
+                          }}
+                          className="text-tg-text-muted hover:text-white transition text-sm font-bold p-1 cursor-pointer"
                         >
-                          ✕ Close
+                          ✕
                         </button>
                       </div>
 
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
-                        {/* Invitee detailed card */}
-                        <div className="bg-tg-dark/40 border border-white/5 p-3 rounded-xl space-y-2">
-                          <span className="text-[10px] text-tg-text-muted uppercase tracking-wider font-extrabold block text-tg-blue-light">Invitee (Joined Friend)</span>
-                          <div className="flex items-center gap-2">
-                            <img src={selectedReferral.invitee.photoUrl} className="w-9 h-9 rounded-full" referrerPolicy="no-referrer" />
-                            <div>
-                              <span className="font-bold text-white block">{selectedReferral.invitee.firstName}</span>
-                              <span className="text-[10px] text-tg-text-muted block font-mono">@{selectedReferral.invitee.username || 'N/A'}</span>
-                            </div>
-                          </div>
-                          <div className="space-y-1 pt-1.5 border-t border-white/5 text-[10px] font-mono leading-relaxed text-tg-text-muted">
-                            <div>Telegram ID: <span className="text-white">{selectedReferral.invitee.id}</span></div>
-                            <div>Registration Date: <span className="text-white">{new Date(selectedReferral.invitee.registeredAt).toLocaleString()}</span></div>
-                            <div>Mandatory Done: <span className={selectedReferral.invitee.mandatoryCompleted ? 'text-emerald-400 font-bold' : 'text-red-400 font-bold'}>{selectedReferral.invitee.mandatoryCompleted ? 'YES' : 'NO'}</span></div>
-                          </div>
-                        </div>
+                      <p className="text-xs text-tg-text-muted leading-relaxed">
+                        These are only the {newlyGeneratedCodes.length} codes you just generated. Older codes are not included. Click below to copy them instantly.
+                      </p>
 
-                        {/* Referrer detailed card */}
-                        <div className="bg-tg-dark/40 border border-white/5 p-3 rounded-xl space-y-2">
-                          <span className="text-[10px] text-tg-text-muted uppercase tracking-wider font-extrabold block text-amber-400">Referrer (Invited By)</span>
-                          <div className="flex items-center gap-2">
-                            <img src={selectedReferral.referrer.photoUrl} className="w-9 h-9 rounded-full" referrerPolicy="no-referrer" />
-                            <div>
-                              <span className="font-bold text-white block">{selectedReferral.referrer.firstName}</span>
-                              <span className="text-[10px] text-tg-text-muted block font-mono">@{selectedReferral.referrer.username || 'N/A'}</span>
-                            </div>
-                          </div>
-                          <div className="space-y-1 pt-1.5 border-t border-white/5 text-[10px] font-mono leading-relaxed text-tg-text-muted">
-                            <div>Telegram ID: <span className="text-white">{selectedReferral.referrer.id}</span></div>
-                            <div>Total Invited: <span className="text-white">{selectedReferral.referrer.referralCount || 0} users</span></div>
-                            <div>Staking Balance: <span className="text-white">{selectedReferral.referrer.balanceTM} TM</span></div>
-                          </div>
-                        </div>
+                      <div className="relative">
+                        <textarea
+                          readOnly
+                          value={newlyGeneratedCodes.join('\n')}
+                          className="w-full h-48 bg-tg-dark/60 border border-white/5 rounded-xl p-3 text-xs font-mono text-white focus:outline-none focus:border-purple-500/40 resize-none select-all"
+                        />
+                        <span className="absolute right-2 bottom-2 text-[10px] text-tg-text-muted bg-black/40 px-1.5 py-0.5 rounded font-mono">
+                          {newlyGeneratedCodes.length} codes
+                        </span>
                       </div>
 
-                      <div className="p-4 bg-tg-dark/60 rounded-xl border border-white/5 space-y-2.5 text-xs">
-                        <span className="text-[10px] text-tg-text-muted uppercase tracking-wider font-extrabold block">Referral Reward Audit Logs</span>
-                        <div className="flex items-center justify-between text-[11px]">
-                          <span className="text-tg-text-muted">Verification Status:</span>
-                          <span className={`font-bold font-mono px-2 py-0.5 rounded text-[10px] uppercase ${
-                            selectedReferral.invitee.referralCounted
-                              ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/10'
-                              : 'bg-red-500/10 text-red-400 border border-red-500/10 animate-pulse-slow'
-                          }`}>
-                            {selectedReferral.invitee.referralCounted ? '🟢 VERIFIED SUCCESSFUL' : '🔴 INCOMPLETE / PENDING'}
-                          </span>
-                        </div>
-                        <div className="flex items-center justify-between text-[11px] pt-1 border-t border-white/5">
-                          <span className="text-tg-text-muted">USDT Credited:</span>
-                          <span className="font-bold font-mono text-white">$0.00 USDT</span>
-                        </div>
-                        <div className="flex items-center justify-between text-[11px] pt-1 border-t border-white/5">
-                          <span className="text-tg-text-muted">TM Distributed:</span>
-                          <span className={`font-bold font-mono ${selectedReferral.invitee.referralCounted ? 'text-emerald-400' : 'text-tg-text-muted'}`}>
-                            {selectedReferral.invitee.referralCounted ? '+100 TM' : '0 TM'}
-                          </span>
-                        </div>
-                      </div>
-
-                      <div className="flex justify-end pt-1">
+                      <div className="flex flex-col sm:flex-row gap-2 pt-2">
                         <button
-                          onClick={() => setSelectedReferral(null)}
-                          className="w-full sm:w-auto bg-tg-blue hover:bg-tg-blue-light text-white text-xs font-bold py-2.5 px-6 rounded-xl transition cursor-pointer"
+                          onClick={async () => {
+                            try {
+                              await navigator.clipboard.writeText(newlyGeneratedCodes.join('\n'));
+                              setHasCopiedNewCodes(true);
+                              setTimeout(() => setHasCopiedNewCodes(false), 2000);
+                            } catch (err) {
+                              console.error(err);
+                            }
+                          }}
+                          className="flex-1 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 text-white text-xs font-bold py-2.5 rounded-xl transition cursor-pointer flex items-center justify-center gap-1.5"
                         >
-                          Acknowledge & Close
+                          <Clipboard className="w-4 h-4" />
+                          <span>{hasCopiedNewCodes ? '✓ Copied to Clipboard!' : 'Copy All New Codes'}</span>
+                        </button>
+                        <button
+                          onClick={() => {
+                            setNewlyGeneratedCodes([]);
+                            setHasCopiedNewCodes(false);
+                          }}
+                          className="bg-white/5 hover:bg-white/10 text-white text-xs font-bold py-2.5 px-5 rounded-xl transition cursor-pointer"
+                        >
+                          Close
                         </button>
                       </div>
                     </div>
