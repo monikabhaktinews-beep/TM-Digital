@@ -2,6 +2,8 @@ import { AppDatabase, UserProfile, Task, Channel, DepositRequest, WithdrawalRequ
 
 const STORAGE_KEY = 'tm_digital_database_v1';
 
+let currentActiveUserId: string | null = null;
+
 // Initial Mock Setup
 const DEFAULT_SETTINGS: SystemSettings = {
   conversionRate: 1000, // 1 USDT = 1000 TM
@@ -597,7 +599,7 @@ export const saveDB = (db: AppDatabase) => {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(db));
   
   // Background server save
-  const url = '/api/db/save';
+  const url = currentActiveUserId ? `/api/db/save?userId=${currentActiveUserId}` : '/api/db/save';
   fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -677,6 +679,7 @@ export const completeOnboardingOnServer = async (
 };
 
 export const loadDBFromServer = async (userId: string, extraData: any = {}): Promise<AppDatabase> => {
+  currentActiveUserId = userId;
   try {
     const params = new URLSearchParams({ userId, ...extraData });
     const url = `/api/db?${params.toString()}`;
@@ -792,15 +795,26 @@ export const getUserProfile = (tgUser: { id: string; username?: string; firstNam
       isBanned: false
     };
 
-    // Robust referral parameter detection
-    const urlParams = new URLSearchParams(window.location.search);
-    let startParam = urlParams.get('tgWebAppStartParam') || 
-                     urlParams.get('start_param') || 
-                     urlParams.get('ref') || 
-                     urlParams.get('startapp') || 
-                     urlParams.get('start');
+    let startParam = '';
     
-    // Also try to find it in the hash just in case
+    // 1. Try to get from Telegram WebApp SDK directly (the most robust way inside Telegram)
+    const telegramObj = (window as any).Telegram;
+    if (telegramObj?.WebApp?.initDataUnsafe) {
+      startParam = telegramObj.WebApp.initDataUnsafe.start_param || 
+                   telegramObj.WebApp.initDataUnsafe.startParam || '';
+    }
+    
+    // 2. Fallback to URL search parameters
+    if (!startParam) {
+      const urlParams = new URLSearchParams(window.location.search);
+      startParam = urlParams.get('tgWebAppStartParam') || 
+                   urlParams.get('start_param') || 
+                   urlParams.get('ref') || 
+                   urlParams.get('startapp') || 
+                   urlParams.get('start') || '';
+    }
+    
+    // 3. Fallback to hash parameters
     if (!startParam && window.location.hash) {
       try {
         const hashParts = window.location.hash.split('?');
@@ -811,7 +825,7 @@ export const getUserProfile = (tgUser: { id: string; username?: string; firstNam
                        hashParams.get('start_param') || 
                        hashParams.get('ref') || 
                        hashParams.get('startapp') || 
-                       hashParams.get('start');
+                       hashParams.get('start') || '';
         }
       } catch (e) {}
     }

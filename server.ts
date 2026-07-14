@@ -421,10 +421,30 @@ async function startServer() {
       currentDb.settings = updatedDb.settings || currentDb.settings;
       currentDb.notifications = updatedDb.notifications || currentDb.notifications;
       
-      // Update users' state fields but do NOT trust client balance modifications directly unless we have to,
-      // though for simulation completeness we let admin updates sync!
+      // Update users' state fields safely
+      const activeUserId = req.query.userId as string;
       if (updatedDb.users && Array.isArray(updatedDb.users) && updatedDb.users.length > 0) {
-        currentDb.users = updatedDb.users;
+        if (activeUserId) {
+          // SAFE MERGING: If an active user ID is specified, we ONLY update that user's profile from the client.
+          // For all other users, we preserve their server-side data (balances, referral counts, etc.) 
+          // because the client saving this payload doesn't have the authority to overwrite other users' balances.
+          currentDb.users = currentDb.users.map((serverUser: any) => {
+            const clientUser = updatedDb.users.find((u: any) => u.id === serverUser.id);
+            if (clientUser && serverUser.id === activeUserId) {
+              return clientUser; // Authoritative update for the active user
+            }
+            return serverUser; // Keep server-side data for other users
+          });
+          
+          // If the active user doesn't exist in currentDb yet, append them
+          const clientActiveUser = updatedDb.users.find((u: any) => u.id === activeUserId);
+          if (clientActiveUser && !currentDb.users.some((u: any) => u.id === activeUserId)) {
+            currentDb.users.push(clientActiveUser);
+          }
+        } else {
+          // If no active user ID is specified (e.g. from admin panel), overwrite users fully
+          currentDb.users = updatedDb.users;
+        }
       }
       currentDb.completedTasks = updatedDb.completedTasks || currentDb.completedTasks;
       

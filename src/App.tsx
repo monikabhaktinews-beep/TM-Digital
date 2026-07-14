@@ -64,15 +64,26 @@ export default function App() {
   useEffect(() => {
     let active = true;
     const fetchServerDB = async () => {
-      // Robust referral parameter detection to pass to the server
-      const urlParams = new URLSearchParams(window.location.search);
-      let startParam = urlParams.get('tgWebAppStartParam') || 
-                       urlParams.get('start_param') || 
-                       urlParams.get('ref') || 
-                       urlParams.get('startapp') || 
-                       urlParams.get('start');
+      let startParam = '';
       
-      // Check window.location.hash just in case
+      // 1. Try to get from Telegram WebApp SDK directly (the most robust way inside Telegram)
+      const telegramObj = (window as any).Telegram;
+      if (telegramObj?.WebApp?.initDataUnsafe) {
+        startParam = telegramObj.WebApp.initDataUnsafe.start_param || 
+                     telegramObj.WebApp.initDataUnsafe.startParam || '';
+      }
+      
+      // 2. Fallback to URL search parameters
+      if (!startParam) {
+        const urlParams = new URLSearchParams(window.location.search);
+        startParam = urlParams.get('tgWebAppStartParam') || 
+                     urlParams.get('start_param') || 
+                     urlParams.get('ref') || 
+                     urlParams.get('startapp') || 
+                     urlParams.get('start') || '';
+      }
+      
+      // 3. Fallback to hash parameters
       if (!startParam && window.location.hash) {
         try {
           const hashParts = window.location.hash.split('?');
@@ -83,7 +94,7 @@ export default function App() {
                          hashParams.get('start_param') || 
                          hashParams.get('ref') || 
                          hashParams.get('startapp') || 
-                         hashParams.get('start');
+                         hashParams.get('start') || '';
           }
         } catch (e) {}
       }
