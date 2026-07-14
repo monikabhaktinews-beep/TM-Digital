@@ -330,11 +330,8 @@ async function startServer() {
             if (!user.referralCounted) {
               user.referralCounted = true;
               
-              const referralRewardTM = db.settings.referralRewardTM ?? 100;
               const referralRewardUSDT = db.settings.referralRewardUSDT ?? 0.02;
 
-              referrer.balanceTM = (referrer.balanceTM || 0) + referralRewardTM;
-              referrer.referralEarningsTM = (referrer.referralEarningsTM || 0) + referralRewardTM;
               referrer.balanceUSDT = Number(((referrer.balanceUSDT || 0) + referralRewardUSDT).toFixed(4));
               referrer.referralEarningsUSDT = Number(((referrer.referralEarningsUSDT || 0) + referralRewardUSDT).toFixed(4));
               referrer.referralCount = (referrer.referralCount || 0) + 1;
@@ -344,7 +341,7 @@ async function startServer() {
                 id: `ref_tx_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
                 userId: referrer.id,
                 type: 'Referral',
-                amountTM: referralRewardTM,
+                amountTM: 0,
                 amountUSDT: referralRewardUSDT,
                 description: `Referral Reward for inviting ${user.firstName} (@${user.username || user.id})`,
                 createdAt: new Date().toISOString()
@@ -356,7 +353,7 @@ async function startServer() {
                 id: `notif_${Date.now()}_ref_${Math.random().toString(36).substring(2, 7)}`,
                 userId: referrer.id,
                 title: 'Referral Completed! 👥',
-                message: `Your invitee ${user.firstName} joined. You received +$${referralRewardUSDT} USDT & +${referralRewardTM} TM!`,
+                message: `Your invitee ${user.firstName} joined. You received +$${referralRewardUSDT} USDT!`,
                 type: 'referral_completed',
                 createdAt: new Date().toISOString(),
                 read: false

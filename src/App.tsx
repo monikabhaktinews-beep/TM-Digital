@@ -64,12 +64,37 @@ export default function App() {
   useEffect(() => {
     let active = true;
     const fetchServerDB = async () => {
+      // Robust referral parameter detection to pass to the server
+      const urlParams = new URLSearchParams(window.location.search);
+      let startParam = urlParams.get('tgWebAppStartParam') || 
+                       urlParams.get('start_param') || 
+                       urlParams.get('ref') || 
+                       urlParams.get('startapp') || 
+                       urlParams.get('start');
+      
+      // Check window.location.hash just in case
+      if (!startParam && window.location.hash) {
+        try {
+          const hashParts = window.location.hash.split('?');
+          const hashQuery = hashParts[1] || (hashParts[0].includes('?') ? hashParts[0].split('?')[1] : '');
+          if (hashQuery) {
+            const hashParams = new URLSearchParams(hashQuery);
+            startParam = hashParams.get('tgWebAppStartParam') || 
+                         hashParams.get('start_param') || 
+                         hashParams.get('ref') || 
+                         hashParams.get('startapp') || 
+                         hashParams.get('start');
+          }
+        } catch (e) {}
+      }
+
       const serverDb = await loadDBFromServer(activeUser.id, {
         username: activeUser.username || '',
         firstName: activeUser.firstName,
         lastName: activeUser.lastName || '',
         photoUrl: activeUser.photoUrl || '',
-        languageCode: activeUser.languageCode || ''
+        languageCode: activeUser.languageCode || '',
+        ref: startParam || ''
       });
       if (active) {
         setDb(serverDb);
