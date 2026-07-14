@@ -839,8 +839,12 @@ export const getUserProfile = (tgUser: { id: string; username?: string; firstNam
       
       const refVal = refId.trim();
       if (refVal && refVal !== tgUser.id) {
-        // Find referrer by either Telegram ID or numeric UID
-        const referrer = db.users.find(u => u.id === refVal || String(u.uid) === refVal);
+        // Find referrer by Telegram ID, numeric UID, or username (case-insensitive)
+        const referrer = db.users.find(u => 
+          u.id === refVal || 
+          String(u.uid) === refVal || 
+          (u.username && u.username.toLowerCase() === refVal.toLowerCase())
+        );
         if (referrer && referrer.id !== tgUser.id && !referrer.isBanned && !referrer.isFrozen) {
           user.referredBy = referrer.id;
           

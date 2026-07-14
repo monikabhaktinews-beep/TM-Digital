@@ -311,19 +311,31 @@ async function startServer() {
         saveDB(db);
       }
 
-      // Check for referral param if passed in query
-      let refId = (req.query.ref as string || '').trim();
+      // Check for referral param if passed in query (support all standard Telegram query param variations)
+      let refId = (req.query.ref as string || 
+                   req.query.start_param as string || 
+                   req.query.startParam as string || 
+                   req.query.startapp as string || 
+                   req.query.tgWebAppStartParam as string || '').trim();
       if (refId) {
         if (refId.startsWith('ref_')) {
           refId = refId.substring(4);
         }
         const refVal = refId.trim();
+        console.log(`[Referral Process] User: ${userId}, passed ref parameter: "${refId}" -> processed as: "${refVal}"`);
+        
         // If user doesn't have a referrer and hasn't been counted yet, and ref is valid
         if (refVal && refVal !== userId && (!user.referredBy || !user.referralCounted)) {
-          // Find referrer by numeric UID or string ID
-          const referrer = db.users.find((u: any) => String(u.uid) === refVal || u.id === refVal);
+          // Find referrer: primary check by Telegram ID (as requested), with fallback to numeric UID or username
+          const referrer = db.users.find((u: any) => 
+            u.id === refVal || 
+            String(u.uid) === refVal ||
+            (u.username && u.username.toLowerCase() === refVal.toLowerCase())
+          );
+          
           if (referrer && referrer.id !== userId && !referrer.isBanned && !referrer.isFrozen) {
             user.referredBy = referrer.id;
+            console.log(`[Referral Process] Found valid referrer: ${referrer.firstName} (@${referrer.username || referrer.id})`);
             
             // "Jab is page me ayega to hi refer add hoga"
             // We credit the referrer immediately!
