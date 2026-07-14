@@ -295,12 +295,16 @@ async function startServer() {
 
   // Log all incoming requests to requests.log for debugging
   app.use((req, res, next) => {
-    const logLine = `[${new Date().toISOString()}] ${req.method} ${req.url} (IP: ${req.ip || req.headers['x-forwarded-for']}) - Headers: ${JSON.stringify(req.headers)}\n`;
-    try {
-      fs.appendFileSync(path.join(process.cwd(), 'requests.log'), logLine, 'utf8');
-    } catch (e) {
-      console.error("Failed to write request log", e);
-    }
+    const startTime = Date.now();
+    res.on('finish', () => {
+      const duration = Date.now() - startTime;
+      const logLine = `[${new Date().toISOString()}] ${req.method} ${req.url} - Status: ${res.statusCode} (${duration}ms) (IP: ${req.ip || req.headers['x-forwarded-for']})\n`;
+      try {
+        fs.appendFileSync(path.join(process.cwd(), 'requests.log'), logLine, 'utf8');
+      } catch (e) {
+        console.error("Failed to write request log", e);
+      }
+    });
     next();
   });
 
@@ -459,54 +463,59 @@ async function startServer() {
 
   // Save the client-updated DB (for non-critical changes like tickets or settings edits)
   app.post('/api/db/save', (req, res) => {
-    const updatedDb = req.body;
-    if (!updatedDb || !updatedDb.users) {
-      return res.status(400).json({ error: 'Invalid database payload' });
-    }
-    
-    // Server-side safety: we load the current DB first to make sure we don't overwrite completed tasks and balances trivially!
-    const currentDb = getDB();
-    if (currentDb) {
-      // Overwrite general editable configs
-      currentDb.tickets = updatedDb.tickets || currentDb.tickets;
-      currentDb.deposits = updatedDb.deposits || currentDb.deposits;
-      currentDb.withdrawals = updatedDb.withdrawals || currentDb.withdrawals;
-      currentDb.transactions = updatedDb.transactions || currentDb.transactions;
-      currentDb.settings = updatedDb.settings || currentDb.settings;
-      currentDb.notifications = updatedDb.notifications || currentDb.notifications;
-      
-      // Update users' state fields safely
-      const activeUserId = req.query.userId as string;
-      if (updatedDb.users && Array.isArray(updatedDb.users) && updatedDb.users.length > 0) {
-        if (activeUserId) {
-          // SAFE MERGING: If an active user ID is specified, we ONLY update that user's profile from the client.
-          // For all other users, we preserve their server-side data (balances, referral counts, etc.) 
-          // because the client saving this payload doesn't have the authority to overwrite other users' balances.
-          currentDb.users = currentDb.users.map((serverUser: any) => {
-            const clientUser = updatedDb.users.find((u: any) => u.id === serverUser.id);
-            if (clientUser && serverUser.id === activeUserId) {
-              return clientUser; // Authoritative update for the active user
-            }
-            return serverUser; // Keep server-side data for other users
-          });
-          
-          // If the active user doesn't exist in currentDb yet, append them
-          const clientActiveUser = updatedDb.users.find((u: any) => u.id === activeUserId);
-          if (clientActiveUser && !currentDb.users.some((u: any) => u.id === activeUserId)) {
-            currentDb.users.push(clientActiveUser);
-          }
-        } else {
-          // If no active user ID is specified (e.g. from admin panel), overwrite users fully
-          currentDb.users = updatedDb.users;
-        }
+    try {
+      const updatedDb = req.body;
+      if (!updatedDb || !updatedDb.users) {
+        return res.status(400).json({ error: 'Invalid database payload' });
       }
-      currentDb.completedTasks = updatedDb.completedTasks || currentDb.completedTasks;
       
-      saveDB(currentDb);
-      res.json({ success: true, db: currentDb });
-    } else {
-      saveDB(updatedDb);
-      res.json({ success: true, db: updatedDb });
+      // Server-side safety: we load the current DB first to make sure we don't overwrite completed tasks and balances trivially!
+      const currentDb = getDB();
+      if (currentDb) {
+        // Overwrite general editable configs
+        currentDb.tickets = updatedDb.tickets || currentDb.tickets;
+        currentDb.deposits = updatedDb.deposits || currentDb.deposits;
+        currentDb.withdrawals = updatedDb.withdrawals || currentDb.withdrawals;
+        currentDb.transactions = updatedDb.transactions || currentDb.transactions;
+        currentDb.settings = updatedDb.settings || currentDb.settings;
+        currentDb.notifications = updatedDb.notifications || currentDb.notifications;
+        
+        // Update users' state fields safely
+        const activeUserId = req.query.userId as string;
+        if (updatedDb.users && Array.isArray(updatedDb.users) && updatedDb.users.length > 0) {
+          if (activeUserId) {
+            // SAFE MERGING: If an active user ID is specified, we ONLY update that user's profile from the client.
+            // For all other users, we preserve their server-side data (balances, referral counts, etc.) 
+            // because the client saving this payload doesn't have the authority to overwrite other users' balances.
+            currentDb.users = currentDb.users.map((serverUser: any) => {
+              const clientUser = updatedDb.users.find((u: any) => u.id === serverUser.id);
+              if (clientUser && serverUser.id === activeUserId) {
+                return clientUser; // Authoritative update for the active user
+              }
+              return serverUser; // Keep server-side data for other users
+            });
+            
+            // If the active user doesn't exist in currentDb yet, append them
+            const clientActiveUser = updatedDb.users.find((u: any) => u.id === activeUserId);
+            if (clientActiveUser && !currentDb.users.some((u: any) => u.id === activeUserId)) {
+              currentDb.users.push(clientActiveUser);
+            }
+          } else {
+            // If no active user ID is specified (e.g. from admin panel), overwrite users fully
+            currentDb.users = updatedDb.users;
+          }
+        }
+        currentDb.completedTasks = updatedDb.completedTasks || currentDb.completedTasks;
+        
+        saveDB(currentDb);
+        res.json({ success: true, db: currentDb });
+      } else {
+        saveDB(updatedDb);
+        res.json({ success: true, db: updatedDb });
+      }
+    } catch (err: any) {
+      console.error('[Server DB Save Error]', err);
+      res.status(500).json({ error: 'Internal server error: ' + (err.message || String(err)) });
     }
   });
 
@@ -750,93 +759,98 @@ async function startServer() {
 
   // Claim Gift Code
   app.post('/api/gift-code/claim', (req, res) => {
-    const { userId, code } = req.body;
-    if (!userId || !code) {
-      return res.status(400).json({ success: false, error: 'Missing userId or gift code' });
+    try {
+      const { userId, code } = req.body;
+      if (!userId || !code) {
+        return res.status(400).json({ success: false, error: 'Missing userId or gift code' });
+      }
+
+      const db = getDB();
+      if (!db) {
+        return res.status(500).json({ success: false, error: 'Database error on server' });
+      }
+
+      const user = db.users.find((u: any) => u.id === userId);
+      if (!user) {
+        return res.status(404).json({ success: false, error: 'User not found' });
+      }
+
+      if (!db.giftCodes) {
+        db.giftCodes = [];
+      }
+
+      const cleanedCode = code.trim().toUpperCase();
+      const giftCode = db.giftCodes.find((gc: any) => gc && typeof gc.code === 'string' && gc.code.toUpperCase() === cleanedCode);
+
+      if (!giftCode) {
+        return res.status(400).json({ success: false, error: 'Invalid Gift Code. Please check and try again.' });
+      }
+
+      if (!giftCode.isEnabled) {
+        return res.status(400).json({ success: false, error: 'This Gift Code has been disabled.' });
+      }
+
+      if (giftCode.expiryDate && new Date() > new Date(giftCode.expiryDate)) {
+        return res.status(400).json({ success: false, error: 'This Gift Code has expired.' });
+      }
+
+      if (giftCode.claimsCount >= giftCode.maxClaims) {
+        return res.status(400).json({ success: false, error: 'This Gift Code has reached its maximum claims limit.' });
+      }
+
+      if (!giftCode.claimedBy) {
+        giftCode.claimedBy = [];
+      }
+
+      if (giftCode.claimedBy.includes(userId)) {
+        return res.status(400).json({ success: false, error: 'You have already claimed this Gift Code.' });
+      }
+
+      // Process valid claim
+      giftCode.claimsCount = (giftCode.claimsCount || 0) + 1;
+      giftCode.claimedBy.push(userId);
+
+      const reward = Number(giftCode.rewardAmount || 0);
+      user.balanceUSDT = Number(((user.balanceUSDT || 0) + reward).toFixed(4));
+      user.lifetimeEarningsUSDT = Number(((user.lifetimeEarningsUSDT || 0) + reward).toFixed(4));
+
+      // Create a transaction
+      db.transactions.unshift({
+        id: `tx_gift_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+        userId: userId,
+        type: 'Reward',
+        amountTM: 0,
+        amountUSDT: reward,
+        description: `Gift Code Claimed: ${giftCode.code}`,
+        createdAt: new Date().toISOString()
+      });
+
+      // Create a notification
+      if (!db.notifications) {
+        db.notifications = [];
+      }
+      db.notifications.unshift({
+        id: `notif_gift_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+        userId: userId,
+        title: 'Gift Code Claimed! 🎁',
+        message: `Successfully claimed code ${giftCode.code}! received +$${reward.toFixed(2)} USDT.`,
+        type: 'task_completed',
+        createdAt: new Date().toISOString(),
+        read: false
+      });
+
+      saveDB(db);
+
+      res.json({
+        success: true,
+        message: `Successfully claimed! +$${reward.toFixed(2)} USDT credited to your balance.`,
+        db,
+        user
+      });
+    } catch (err: any) {
+      console.error('[Server Gift Code Claim Route Error]', err);
+      res.status(500).json({ success: false, error: 'Internal server error: ' + (err.message || String(err)) });
     }
-
-    const db = getDB();
-    if (!db) {
-      return res.status(500).json({ success: false, error: 'Database error on server' });
-    }
-
-    const user = db.users.find((u: any) => u.id === userId);
-    if (!user) {
-      return res.status(404).json({ success: false, error: 'User not found' });
-    }
-
-    if (!db.giftCodes) {
-      db.giftCodes = [];
-    }
-
-    const cleanedCode = code.trim().toUpperCase();
-    const giftCode = db.giftCodes.find((gc: any) => gc.code.toUpperCase() === cleanedCode);
-
-    if (!giftCode) {
-      return res.status(400).json({ success: false, error: 'Invalid Gift Code. Please check and try again.' });
-    }
-
-    if (!giftCode.isEnabled) {
-      return res.status(400).json({ success: false, error: 'This Gift Code has been disabled.' });
-    }
-
-    if (giftCode.expiryDate && new Date() > new Date(giftCode.expiryDate)) {
-      return res.status(400).json({ success: false, error: 'This Gift Code has expired.' });
-    }
-
-    if (giftCode.claimsCount >= giftCode.maxClaims) {
-      return res.status(400).json({ success: false, error: 'This Gift Code has reached its maximum claims limit.' });
-    }
-
-    if (!giftCode.claimedBy) {
-      giftCode.claimedBy = [];
-    }
-
-    if (giftCode.claimedBy.includes(userId)) {
-      return res.status(400).json({ success: false, error: 'You have already claimed this Gift Code.' });
-    }
-
-    // Process valid claim
-    giftCode.claimsCount += 1;
-    giftCode.claimedBy.push(userId);
-
-    const reward = Number(giftCode.rewardAmount);
-    user.balanceUSDT = Number((user.balanceUSDT + reward).toFixed(4));
-    user.lifetimeEarningsUSDT = Number((user.lifetimeEarningsUSDT + reward).toFixed(4));
-
-    // Create a transaction
-    db.transactions.unshift({
-      id: `tx_gift_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
-      userId: userId,
-      type: 'Reward',
-      amountTM: 0,
-      amountUSDT: reward,
-      description: `Gift Code Claimed: ${giftCode.code}`,
-      createdAt: new Date().toISOString()
-    });
-
-    // Create a notification
-    if (!db.notifications) {
-      db.notifications = [];
-    }
-    db.notifications.unshift({
-      id: `notif_gift_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
-      userId: userId,
-      title: 'Gift Code Claimed! 🎁',
-      message: `Successfully claimed code ${giftCode.code}! received +$${reward.toFixed(2)} USDT.`,
-      type: 'task_completed',
-      createdAt: new Date().toISOString(),
-      read: false
-    });
-
-    saveDB(db);
-
-    res.json({
-      success: true,
-      message: `Successfully claimed! +$${reward.toFixed(2)} USDT credited to your balance.`,
-      db,
-      user
-    });
   });
 
   // Generate Gift Codes

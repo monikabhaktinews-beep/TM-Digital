@@ -22,8 +22,8 @@ export const GiftCodeTab: React.FC<GiftCodeTabProps> = ({
 
   // Filter out transactions related to claiming gift codes for this user
   const claimHistory = (db.transactions || [])
-    .filter(tx => tx.userId === user.id && tx.description.includes('Gift Code Claimed'))
-    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    .filter(tx => tx && tx.userId === user.id && typeof tx.description === 'string' && tx.description.includes('Gift Code Claimed'))
+    .sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
 
   const handleClaim = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -47,7 +47,14 @@ export const GiftCodeTab: React.FC<GiftCodeTabProps> = ({
         })
       });
 
-      const data = await response.json();
+      let data;
+      const responseText = await response.text();
+      try {
+        data = JSON.parse(responseText);
+      } catch (parseErr) {
+        console.error('Failed to parse claim response as JSON:', responseText);
+        throw new Error(`Server returned a non-JSON response (Status ${response.status}).`);
+      }
 
       if (!response.ok || !data.success) {
         const errMsg = data.error || data.message || 'Failed to claim gift code.';
@@ -67,9 +74,10 @@ export const GiftCodeTab: React.FC<GiftCodeTabProps> = ({
       }
     } catch (err: any) {
       console.error('[Gift Code Claim Error]', err);
-      setMessage({ text: '❌ Server or connection error. Please try again.', type: 'error' });
+      const errMsg = err.message || 'Server or connection error. Please try again.';
+      setMessage({ text: `❌ ${errMsg}`, type: 'error' });
       if (showToast) {
-        showToast('Connection error.', 'error');
+        showToast(errMsg, 'error');
       }
     } finally {
       setLoading(false);
@@ -170,32 +178,37 @@ export const GiftCodeTab: React.FC<GiftCodeTabProps> = ({
           </div>
         ) : (
           <div className="space-y-3 max-h-60 overflow-y-auto pr-1">
-            {claimHistory.map((tx) => (
-              <div
-                key={tx.id}
-                className="bg-black/20 border border-white/5 rounded-2xl p-4 flex items-center justify-between gap-3"
-              >
-                <div className="space-y-1">
-                  <div className="text-sm font-mono font-bold text-white">
-                    {tx.description.replace('Gift Code Claimed: ', '')}
-                  </div>
-                  <div className="text-xs text-gray-500">
-                    {new Date(tx.createdAt).toLocaleString(undefined, {
-                      dateStyle: 'medium',
-                      timeStyle: 'short'
-                    })}
-                  </div>
-                </div>
-                <div className="text-right">
-                  <div className="text-sm font-black text-emerald-400">
-                    +${tx.amountUSDT.toFixed(2)} USDT
-                  </div>
-                  <div className="text-[10px] text-emerald-500/70 font-semibold uppercase tracking-wider bg-emerald-500/5 px-1.5 py-0.5 rounded border border-emerald-500/10 inline-block">
-                    Success
-                  </div>
-                </div>
-              </div>
-            ))}
+             {claimHistory.map((tx) => {
+               const desc = typeof tx.description === 'string' ? tx.description.replace('Gift Code Claimed: ', '') : 'Gift Reward';
+               const dateStr = tx.createdAt ? new Date(tx.createdAt).toLocaleString(undefined, {
+                 dateStyle: 'medium',
+                 timeStyle: 'short'
+               }) : 'N/A';
+               const amount = typeof tx.amountUSDT === 'number' ? tx.amountUSDT : Number(tx.amountUSDT || 0);
+               return (
+                 <div
+                   key={tx.id || Math.random().toString()}
+                   className="bg-black/20 border border-white/5 rounded-2xl p-4 flex items-center justify-between gap-3"
+                 >
+                   <div className="space-y-1">
+                     <div className="text-sm font-mono font-bold text-white">
+                       {desc}
+                     </div>
+                     <div className="text-xs text-gray-500">
+                       {dateStr}
+                     </div>
+                   </div>
+                   <div className="text-right">
+                     <div className="text-sm font-black text-emerald-400">
+                       +${amount.toFixed(2)} USDT
+                     </div>
+                     <div className="text-[10px] text-emerald-500/70 font-semibold uppercase tracking-wider bg-emerald-500/5 px-1.5 py-0.5 rounded border border-emerald-500/10 inline-block">
+                       Success
+                     </div>
+                   </div>
+                 </div>
+               );
+             })}
           </div>
         )}
       </div>
