@@ -144,8 +144,8 @@ export default function App() {
   const completedMandatoryCount = mandatoryTasks.filter(t => completedTaskIds.includes(t.id)).length;
   const totalMandatoryCount = mandatoryTasks.length;
   
-  // Stricter unlock checks
-  const isUnlocked = userProfile.mandatoryCompleted || (completedMandatoryCount >= Math.min(db.settings.mandatoryTaskCount ?? totalMandatoryCount, totalMandatoryCount));
+  // Stricter unlock checks (always unlocked so no channel joins are required)
+  const isUnlocked = true;
 
   const navigateToTab = (tabId: string) => {
     if (tabId === 'tasks') {
@@ -196,7 +196,8 @@ export default function App() {
   // -------------------------------------------------------------
   // TELEGRAM MINI APP LAYOUT
   // -------------------------------------------------------------
-  if (!userProfile.mandatoryCompleted && mandatoryTasks.length > 0) {
+  // Bypassed mandatory tasks popup completely so user can claim instantly and navigate freely.
+  if (false && !userProfile.mandatoryCompleted && mandatoryTasks.length > 0) {
     return (
       <div className="min-h-screen bg-tg-dark text-tg-text font-sans flex flex-col relative selection:bg-tg-blue/30 selection:text-white">
         {/* Central Interactive Developer simulator */}

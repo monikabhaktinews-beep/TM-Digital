@@ -323,6 +323,9 @@ async function startServer() {
     const { userId } = req.query;
     if (userId && typeof userId === 'string') {
       let user = db.users.find((u: any) => u.id === userId);
+      if (user) {
+        user.mandatoryCompleted = true;
+      }
       if (!user) {
         // Register new user on the server
         const maxUid = db.users.length > 0 ? Math.max(...db.users.map((u: any) => u.uid || 0)) : 117300;
@@ -348,7 +351,7 @@ async function startServer() {
           referralCounted: false,
           isFrozen: false,
           isBanned: false,
-          mandatoryCompleted: false
+          mandatoryCompleted: true
         };
         db.users.push(user);
         saveDB(db);
