@@ -147,6 +147,8 @@ export interface UserTransfer {
   senderUid: number;
   receiverUid: number;
   amountTM: number;
+  amountUSDT?: number;
+  currency?: 'TM' | 'USDT';
   createdAt: string;
   status: 'Success' | 'Failed';
 }

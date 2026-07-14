@@ -1861,7 +1861,8 @@ export const lookupRecipientByUid = (uid: number): { success: boolean; name?: st
 export const executeUserTransfer = (
   senderId: string, 
   receiverUid: number, 
-  amount: number
+  amount: number,
+  currency: 'TM' | 'USDT' = 'TM'
 ): { success: boolean; message: string; db?: AppDatabase } => {
   const db = getDB();
   const sender = db.users.find(u => u.id === senderId);
@@ -1890,13 +1891,21 @@ export const executeUserTransfer = (
     return { success: false, message: 'Recipient account is banned or frozen.' };
   }
   
-  if (sender.balanceTM < amount) {
-    return { success: false, message: `Insufficient TM balance. You only have ${sender.balanceTM.toLocaleString()} TM.` };
+  if (currency === 'USDT') {
+    if (sender.balanceUSDT < amount) {
+      return { success: false, message: `Insufficient USDT balance. You only have $${sender.balanceUSDT.toLocaleString()} USDT.` };
+    }
+    // Deduct from sender and credit receiver
+    sender.balanceUSDT = parseFloat((sender.balanceUSDT - amount).toFixed(4));
+    receiver.balanceUSDT = parseFloat((receiver.balanceUSDT + amount).toFixed(4));
+  } else {
+    if (sender.balanceTM < amount) {
+      return { success: false, message: `Insufficient TM balance. You only have ${sender.balanceTM.toLocaleString()} TM.` };
+    }
+    // Deduct from sender and credit receiver
+    sender.balanceTM = parseFloat((sender.balanceTM - amount).toFixed(2));
+    receiver.balanceTM = parseFloat((receiver.balanceTM + amount).toFixed(2));
   }
-  
-  // Deduct from sender and credit receiver
-  sender.balanceTM = parseFloat((sender.balanceTM - amount).toFixed(2));
-  receiver.balanceTM = parseFloat((receiver.balanceTM + amount).toFixed(2));
   
   // Log transfer record in the db
   if (!db.transfers) {
@@ -1907,7 +1916,9 @@ export const executeUserTransfer = (
     id: `transfer_${Date.now()}`,
     senderUid: sender.uid,
     receiverUid: receiver.uid,
-    amountTM: amount,
+    amountTM: currency === 'TM' ? amount : 0,
+    amountUSDT: currency === 'USDT' ? amount : 0,
+    currency,
     createdAt: new Date().toISOString(),
     status: 'Success' as const
   };
@@ -1918,9 +1929,9 @@ export const executeUserTransfer = (
     id: `tx_sent_${Date.now()}`,
     userId: sender.id,
     type: 'TransferSent',
-    amountTM: -amount,
-    amountUSDT: 0,
-    description: `Transferred ${amount.toLocaleString()} TM to UID ${receiver.uid} (${receiver.firstName})`,
+    amountTM: currency === 'TM' ? -amount : 0,
+    amountUSDT: currency === 'USDT' ? -amount : 0,
+    description: `Transferred ${amount.toLocaleString()} ${currency} to UID ${receiver.uid} (${receiver.firstName})`,
     createdAt: new Date().toISOString()
   });
   
@@ -1929,9 +1940,9 @@ export const executeUserTransfer = (
     id: `tx_recv_${Date.now()}`,
     userId: receiver.id,
     type: 'TransferReceived',
-    amountTM: amount,
-    amountUSDT: 0,
-    description: `Received ${amount.toLocaleString()} TM from UID ${sender.uid} (${sender.firstName})`,
+    amountTM: currency === 'TM' ? amount : 0,
+    amountUSDT: currency === 'USDT' ? amount : 0,
+    description: `Received ${amount.toLocaleString()} ${currency} from UID ${sender.uid} (${sender.firstName})`,
     createdAt: new Date().toISOString()
   });
   
@@ -1944,7 +1955,7 @@ export const executeUserTransfer = (
     id: `notif_sent_${Date.now()}`,
     userId: sender.id,
     title: 'Transfer Sent! 📤',
-    message: `You successfully transferred ${amount.toLocaleString()} TM to UID ${receiver.uid} (${receiver.firstName}).`,
+    message: `You successfully transferred ${amount.toLocaleString()} ${currency} to UID ${receiver.uid} (${receiver.firstName}).`,
     type: 'task_completed',
     createdAt: new Date().toISOString(),
     read: false
@@ -1953,14 +1964,14 @@ export const executeUserTransfer = (
   db.notifications.unshift({
     id: `notif_recv_${Date.now()}`,
     userId: receiver.id,
-    title: 'TM Received! 📥',
-    message: `You received ${amount.toLocaleString()} TM from UID ${sender.uid} (${sender.firstName}).`,
+    title: `${currency} Received! 📥`,
+    message: `You received ${amount.toLocaleString()} ${currency} from UID ${sender.uid} (${sender.firstName}).`,
     type: 'deposit_approved',
     createdAt: new Date().toISOString(),
     read: false
   });
   
   saveDB(db);
-  return { success: true, message: `Successfully transferred ${amount.toLocaleString()} TM to ${receiver.firstName} (UID: ${receiver.uid}).`, db };
+  return { success: true, message: `Successfully transferred ${amount.toLocaleString()} ${currency} to ${receiver.firstName} (UID: ${receiver.uid}).`, db };
 };
 

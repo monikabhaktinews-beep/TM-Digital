@@ -36,6 +36,7 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({
   // Transfer Funds State
   const [targetUidStr, setTargetUidStr] = useState<string>('');
   const [transferAmountStr, setTransferAmountStr] = useState<string>('');
+  const [transferCurrency, setTransferCurrency] = useState<'TM' | 'USDT'>('TM');
   const [recipientInfo, setRecipientInfo] = useState<{ success: boolean; name?: string; uid?: number; message?: string } | null>(null);
   const [isVerifying, setIsVerifying] = useState<boolean>(false);
   const [transferError, setTransferError] = useState<string | null>(null);
@@ -158,9 +159,16 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({
       return;
     }
 
-    if (user.balanceTM < amount) {
-      setTransferError(`Insufficient TM balance. You only have ${user.balanceTM.toLocaleString()} TM.`);
-      return;
+    if (transferCurrency === 'USDT') {
+      if (user.balanceUSDT < amount) {
+        setTransferError(`Insufficient USDT balance. You only have $${user.balanceUSDT.toLocaleString()} USDT.`);
+        return;
+      }
+    } else {
+      if (user.balanceTM < amount) {
+        setTransferError(`Insufficient TM balance. You only have ${user.balanceTM.toLocaleString()} TM.`);
+        return;
+      }
     }
 
     if (!recipientInfo || !recipientInfo.success) {
@@ -171,7 +179,7 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({
     setIsTransferring(true);
 
     setTimeout(() => {
-      const result = executeUserTransfer(user.id, numericUid, amount);
+      const result = executeUserTransfer(user.id, numericUid, amount, transferCurrency);
       setIsTransferring(false);
       
       if (result.success && result.db) {
@@ -185,7 +193,7 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({
         setTransferAmountStr('');
         setRecipientInfo(null);
         if (showToast) {
-          showToast(`💸 Sent ${amount.toLocaleString()} TM to UID ${numericUid}!`, 'success');
+          showToast(`💸 Sent ${amount.toLocaleString()} ${transferCurrency} to UID ${numericUid}!`, 'success');
         }
       } else {
         setTransferError(result.message || 'Transfer execution failed.');
@@ -267,6 +275,16 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({
                 className="text-tg-text-muted/60 hover:text-white transition cursor-pointer"
               >
                 <Copy className="w-3 h-3" />
+              </button>
+            </div>
+            <div className="flex items-center gap-1.5 mt-0.5">
+              <span className="text-[10px] text-amber-400 font-mono font-bold">UID: {user.uid}</span>
+              <button 
+                onClick={handleCopyUid}
+                className="text-amber-400/60 hover:text-amber-300 transition cursor-pointer"
+                title="Copy UID"
+              >
+                <Copy className="w-2.5 h-2.5" />
               </button>
             </div>
             {user.username && (
@@ -593,6 +611,41 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({
             className="pt-2 space-y-4 border-t border-white/5"
           >
             <form onSubmit={handleTransferSubmit} className="space-y-4">
+              {/* Currency Selector (TM vs USDT) */}
+              <div className="space-y-1.5">
+                <label className="text-[10px] text-tg-text-muted uppercase tracking-wider font-bold">Currency</label>
+                <div className="grid grid-cols-2 gap-2 bg-tg-dark/40 p-1 rounded-xl border border-white/5">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setTransferCurrency('TM');
+                      setTransferError(null);
+                    }}
+                    className={`py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer ${
+                      transferCurrency === 'TM'
+                        ? 'bg-tg-blue text-white shadow-sm shadow-tg-blue/25'
+                        : 'text-tg-text-muted hover:text-white'
+                    }`}
+                  >
+                    TM
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setTransferCurrency('USDT');
+                      setTransferError(null);
+                    }}
+                    className={`py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer ${
+                      transferCurrency === 'USDT'
+                        ? 'bg-amber-500 text-white shadow-sm shadow-amber-500/25'
+                        : 'text-tg-text-muted hover:text-white'
+                    }`}
+                  >
+                    USDT
+                  </button>
+                </div>
+              </div>
+
               {/* Target UID Field */}
               <div className="space-y-1.5">
                 <label className="text-[10px] text-tg-text-muted uppercase tracking-wider font-bold">Recipient UID</label>
@@ -653,7 +706,7 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({
 
               {/* Transfer Amount Field */}
               <div className="space-y-1.5">
-                <label className="text-[10px] text-tg-text-muted uppercase tracking-wider font-bold">Amount (TM)</label>
+                <label className="text-[10px] text-tg-text-muted uppercase tracking-wider font-bold">Amount ({transferCurrency})</label>
                 <div className="relative">
                   <input 
                     type="number"
@@ -665,12 +718,12 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({
                     disabled={isTransferring}
                     id="transfer_amount_field"
                   />
-                  <span className="absolute right-4 top-1/2 -translate-y-1/2 text-xs text-tg-text-muted font-bold">TM</span>
+                  <span className="absolute right-4 top-1/2 -translate-y-1/2 text-xs text-tg-text-muted font-bold">{transferCurrency}</span>
                 </div>
                 <div className="flex justify-between items-center text-[10px] text-tg-text-muted font-semibold px-1">
-                  <span>Available balance: {user.balanceTM.toLocaleString()} TM</span>
+                  <span>Available balance: {transferCurrency === 'USDT' ? `$${user.balanceUSDT.toLocaleString()}` : `${user.balanceTM.toLocaleString()} TM`}</span>
                   {parseFloat(transferAmountStr) > 0 && (
-                    <span className="text-amber-400">Fee: 0 TM (FREE)</span>
+                    <span className="text-amber-400">Fee: 0 {transferCurrency} (FREE)</span>
                   )}
                 </div>
               </div>
@@ -757,7 +810,7 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({
                   </div>
                   <div className="text-right">
                     <p className={`text-xs font-black ${isSender ? 'text-red-400' : 'text-green-400'}`}>
-                      {isSender ? '-' : '+'}{(tx.amountTM !== undefined ? tx.amountTM : (tx.amountUSDT || 0)).toLocaleString()} TM
+                      {isSender ? '-' : '+'}{tx.currency === 'USDT' ? (tx.amountUSDT || 0).toLocaleString() : (tx.amountTM !== undefined ? tx.amountTM : (tx.amountUSDT || 0)).toLocaleString()} {tx.currency || 'TM'}
                     </p>
                     <p className="text-[8px] uppercase tracking-wider text-green-400 font-bold">
                       {tx.status}
