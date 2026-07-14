@@ -203,6 +203,45 @@ function getDB() {
     const parsed = JSON.parse(content);
     // Ensure default settings and tasks exist
     parsed.settings = { ...DEFAULT_SETTINGS, ...parsed.settings };
+    
+    // Ensure all collection arrays and objects exist to prevent unshift/push errors on old databases
+    if (!parsed.transactions || !Array.isArray(parsed.transactions)) {
+      parsed.transactions = [];
+    }
+    if (!parsed.giftCodes || !Array.isArray(parsed.giftCodes)) {
+      parsed.giftCodes = [];
+    }
+    if (!parsed.notifications || !Array.isArray(parsed.notifications)) {
+      parsed.notifications = [];
+    }
+    if (!parsed.channels || !Array.isArray(parsed.channels)) {
+      parsed.channels = [];
+    }
+    if (!parsed.deposits || !Array.isArray(parsed.deposits)) {
+      parsed.deposits = [];
+    }
+    if (!parsed.withdrawals || !Array.isArray(parsed.withdrawals)) {
+      parsed.withdrawals = [];
+    }
+    if (!parsed.withdrawalRules || !Array.isArray(parsed.withdrawalRules)) {
+      parsed.withdrawalRules = [];
+    }
+    if (!parsed.transfers || !Array.isArray(parsed.transfers)) {
+      parsed.transfers = [];
+    }
+    if (!parsed.tickets || !Array.isArray(parsed.tickets)) {
+      parsed.tickets = [];
+    }
+    if (!parsed.completedTasks || typeof parsed.completedTasks !== 'object') {
+      parsed.completedTasks = {};
+    }
+    if (!parsed.claimedBonuses || typeof parsed.claimedBonuses !== 'object') {
+      parsed.claimedBonuses = {};
+    }
+    if (!parsed.taskSubmissions || !Array.isArray(parsed.taskSubmissions)) {
+      parsed.taskSubmissions = [];
+    }
+
     if (!parsed.users || !Array.isArray(parsed.users) || parsed.users.length === 0) {
       parsed.users = [...DEFAULT_USERS];
     }
