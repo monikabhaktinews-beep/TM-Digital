@@ -9,8 +9,8 @@
       "languageCode": "en",
       "registeredAt": "2026-06-01T12:00:00Z",
       "balanceTM": 4200,
-      "balanceUSDT": 1.719,
-      "lifetimeEarningsUSDT": 4.719,
+      "balanceUSDT": 1.619,
+      "lifetimeEarningsUSDT": 4.619,
       "referralEarningsUSDT": 1.2,
       "todayBonusUSDT": 0.462,
       "depositStatus": "Approved",
@@ -30,8 +30,8 @@
       "languageCode": "en",
       "registeredAt": "2026-07-10T15:30:00Z",
       "balanceTM": 1500,
-      "balanceUSDT": 0.43,
-      "lifetimeEarningsUSDT": 0.43,
+      "balanceUSDT": 0.33,
+      "lifetimeEarningsUSDT": 0.33,
       "referralEarningsUSDT": 0,
       "todayBonusUSDT": 0.165,
       "depositStatus": "Approved",
@@ -251,31 +251,13 @@
   "withdrawalRules": [],
   "transactions": [
     {
-      "id": "tx_gift_1784035135906_h752p",
-      "userId": "222222222",
-      "type": "Reward",
-      "amountTM": 0,
-      "amountUSDT": 0.1,
-      "description": "Gift Code Claimed: TM-GFT-T0SR-WXDG",
-      "createdAt": "2026-07-14T13:18:55.906Z"
-    },
-    {
-      "id": "tx_gift_1784035080746_4j0em",
+      "id": "tx_gift_1784035853142_lxz8w",
       "userId": "111111111",
       "type": "Reward",
       "amountTM": 0,
       "amountUSDT": 0.1,
-      "description": "Gift Code Claimed: TM-GFT-9BKX-NJXZ",
-      "createdAt": "2026-07-14T13:18:00.746Z"
-    },
-    {
-      "id": "tx_gift_1784034860209_dfvws",
-      "userId": "111111111",
-      "type": "Reward",
-      "amountTM": 0,
-      "amountUSDT": 0.1,
-      "description": "Gift Code Claimed: TM-GFT-FLPR-0ELM",
-      "createdAt": "2026-07-14T13:14:20.209Z"
+      "description": "Gift Code Claimed: TM-GFT-8WYS-THD7",
+      "createdAt": "2026-07-14T13:30:53.142Z"
     },
     {
       "id": "tx_task_1783930504631",
@@ -605,30 +587,12 @@
   "taskSubmissions": [],
   "notifications": [
     {
-      "id": "notif_gift_1784035135906_yqpr5",
-      "userId": "222222222",
-      "title": "Gift Code Claimed! 🎁",
-      "message": "Successfully claimed code TM-GFT-T0SR-WXDG! received +$0.10 USDT.",
-      "type": "task_completed",
-      "createdAt": "2026-07-14T13:18:55.906Z",
-      "read": false
-    },
-    {
-      "id": "notif_gift_1784035080746_7gz7a",
+      "id": "notif_gift_1784035853142_cey4z",
       "userId": "111111111",
       "title": "Gift Code Claimed! 🎁",
-      "message": "Successfully claimed code TM-GFT-9BKX-NJXZ! received +$0.10 USDT.",
+      "message": "Successfully claimed code TM-GFT-8WYS-THD7! received +$0.10 USDT.",
       "type": "task_completed",
-      "createdAt": "2026-07-14T13:18:00.746Z",
-      "read": false
-    },
-    {
-      "id": "notif_gift_1784034860209_p6bfw",
-      "userId": "111111111",
-      "title": "Gift Code Claimed! 🎁",
-      "message": "Successfully claimed code TM-GFT-FLPR-0ELM! received +$0.10 USDT.",
-      "type": "task_completed",
-      "createdAt": "2026-07-14T13:14:20.209Z",
+      "createdAt": "2026-07-14T13:30:53.142Z",
       "read": false
     },
     {
@@ -710,10 +674,12 @@
       "code": "TM-GFT-FQ1R-T77S",
       "rewardAmount": 0.1,
       "maxClaims": 1,
-      "claimsCount": 0,
+      "claimsCount": 1,
       "isEnabled": true,
       "createdAt": "2026-07-14T13:07:15.846Z",
-      "claimedBy": []
+      "claimedBy": [
+        "111111111"
+      ]
     },
     {
       "code": "TM-GFT-BOFL-QVQX",
@@ -728,10 +694,12 @@
       "code": "TM-GFT-8WYS-THD7",
       "rewardAmount": 0.1,
       "maxClaims": 1,
-      "claimsCount": 0,
+      "claimsCount": 1,
       "isEnabled": true,
       "createdAt": "2026-07-14T13:07:15.846Z",
-      "claimedBy": []
+      "claimedBy": [
+        "111111111"
+      ]
     },
     {
       "code": "TM-GFT-NQYN-H5MN",

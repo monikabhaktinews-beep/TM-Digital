@@ -53,6 +53,9 @@ export const GiftCodeTab: React.FC<GiftCodeTabProps> = ({
         data = JSON.parse(responseText);
       } catch (parseErr) {
         console.error('Failed to parse claim response as JSON:', responseText);
+        if (response.status === 404) {
+          throw new Error("Server returned a 404 Not Found error. If you are using Telegram, please completely close the Mini App, clear your cache, or restart the bot to load the updated server endpoints.");
+        }
         throw new Error(`Server returned a non-JSON response (Status ${response.status}).`);
       }
 
