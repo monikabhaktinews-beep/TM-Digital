@@ -147,10 +147,9 @@ export interface UserTransfer {
   senderUid: number;
   receiverUid: number;
   amountTM: number;
-  amountUSDT?: number;
-  currency?: 'TM' | 'USDT';
-  createdAt: string;
-  status: 'Success' | 'Failed';
+  status: 'Pending' | 'Completed' | 'Cancelled';
+  timestamp: string;
+  createdAt?: string;
 }
 
 export interface SystemSettings {
@@ -192,6 +191,7 @@ export interface AppDatabase {
   notifications?: UserNotification[]; // Persisted notification center alert logs
   lastInterestPayout?: string; // ISO string of last automatic interest settlement
   giftCodes?: GiftCode[]; // Gift codes list
+  claimedTransfers?: { id: string; senderUid: number; amountTM: number; timestamp: string }[];
 }
 
 export interface GiftCode {

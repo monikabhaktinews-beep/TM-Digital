@@ -2082,7 +2082,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                               <th className="px-4 py-3">Receiver (To UID)</th>
                               <th className="px-4 py-3">Amount</th>
                               <th className="px-4 py-3">Date</th>
-                              <th className="px-4 py-3 text-center">Status</th>
+                              <th className="px-4 py-3 text-center">Status / Actions</th>
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-white/5">
@@ -2094,10 +2094,53 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                               </tr>
                             ) : (
                               [...transfersList]
-                                .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+                                .sort((a, b) => new Date(b.timestamp || b.createdAt || 0).getTime() - new Date(a.timestamp || a.createdAt || 0).getTime())
                                 .map((t) => {
                                   const senderUser = db.users.find(u => u.uid === t.senderUid);
                                   const receiverUser = db.users.find(u => u.uid === t.receiverUid);
+
+                                  const handleCancel = async (tid: string) => {
+                                    if (!window.confirm("Are you sure you want to cancel this pending transfer and refund the sender?")) return;
+                                    try {
+                                      const response = await fetch('/api/admin/transfer/cancel', {
+                                        method: 'POST',
+                                        headers: { 'Content-Type': 'application/json' },
+                                        body: JSON.stringify({ transferId: tid })
+                                      });
+                                      if (response.ok) {
+                                        const data = await response.json();
+                                        onDbUpdate(data.db);
+                                        alert("Transfer cancelled and sender refunded successfully!");
+                                      } else {
+                                        const err = await response.json();
+                                        alert("Error: " + (err.error || 'Failed to cancel'));
+                                      }
+                                    } catch (err: any) {
+                                      alert("Error: " + err.message);
+                                    }
+                                  };
+
+                                  const handleComplete = async (tid: string) => {
+                                    if (!window.confirm("Are you sure you want to force complete this transfer? This will instantly credit the recipient profile.")) return;
+                                    try {
+                                      const response = await fetch('/api/admin/transfer/complete', {
+                                        method: 'POST',
+                                        headers: { 'Content-Type': 'application/json' },
+                                        body: JSON.stringify({ transferId: tid })
+                                      });
+                                      if (response.ok) {
+                                        const data = await response.json();
+                                        onDbUpdate(data.db);
+                                        alert("Transfer force completed successfully!");
+                                      } else {
+                                        const err = await response.json();
+                                        alert("Error: " + (err.error || 'Failed to complete'));
+                                      }
+                                    } catch (err: any) {
+                                      alert("Error: " + err.message);
+                                    }
+                                  };
+
                                   return (
                                     <tr key={t.id} className="hover:bg-white/[0.01] transition duration-200">
                                       <td className="px-4 py-3">
@@ -2109,23 +2152,46 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                                       <td className="px-4 py-3">
                                         <div className="font-bold text-white">UID: {t.receiverUid}</div>
                                         <div className="text-[10px] text-tg-text-muted">
-                                          {receiverUser ? receiverUser.firstName : 'Unknown'}
+                                          {receiverUser ? receiverUser.firstName : 'Offline Member'}
                                         </div>
                                       </td>
                                       <td className="px-4 py-3 font-bold text-emerald-400 font-mono">
                                         {(t.amountTM !== undefined ? t.amountTM : (t.amountUSDT || 0)).toLocaleString()} TM
                                       </td>
                                       <td className="px-4 py-3 font-mono text-[10px]">
-                                        {new Date(t.createdAt).toLocaleString()}
+                                        {new Date(t.timestamp || t.createdAt).toLocaleString()}
                                       </td>
                                       <td className="px-4 py-3 text-center">
-                                        <span className={`text-[9px] px-2 py-0.5 rounded font-extrabold uppercase ${
-                                          t.status === 'Success'
-                                            ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
-                                            : 'bg-red-500/10 text-red-400 border border-red-500/20'
-                                        }`}>
-                                          {t.status}
-                                        </span>
+                                        <div className="flex flex-col items-center gap-1.5">
+                                          <span className={`text-[9px] px-2 py-0.5 rounded font-extrabold uppercase ${
+                                            t.status === 'Success' || t.status === 'Completed'
+                                              ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                                              : t.status === 'Pending'
+                                                ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20 animate-pulse'
+                                                : 'bg-red-500/10 text-red-400 border border-red-500/20'
+                                          }`}>
+                                            {t.status}
+                                          </span>
+                                          
+                                          {t.status === 'Pending' && (
+                                            <div className="flex items-center gap-1 mt-1 justify-center">
+                                              <button
+                                                onClick={() => handleComplete(t.id)}
+                                                className="bg-emerald-500 hover:bg-emerald-400 text-white font-extrabold text-[8px] px-2 py-0.5 rounded shadow cursor-pointer uppercase transition"
+                                                title="Force Complete Transfer"
+                                              >
+                                                Complete
+                                              </button>
+                                              <button
+                                                onClick={() => handleCancel(t.id)}
+                                                className="bg-red-500 hover:bg-red-400 text-white font-extrabold text-[8px] px-2 py-0.5 rounded shadow cursor-pointer uppercase transition"
+                                                title="Cancel & Refund Sender"
+                                              >
+                                                Cancel
+                                              </button>
+                                            </div>
+                                          )}
+                                        </div>
                                       </td>
                                     </tr>
                                   );

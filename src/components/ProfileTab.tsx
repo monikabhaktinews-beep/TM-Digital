@@ -137,7 +137,7 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({
   }, [targetUidStr]);
 
   // Execute peer transfer
-  const handleTransferSubmit = (e: React.FormEvent) => {
+  const handleTransferSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setTransferError(null);
     setTransferSuccess(null);
@@ -172,14 +172,14 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({
     }
 
     if (!recipientInfo || !recipientInfo.success) {
-      setTransferError('Please enter a valid, active recipient UID.');
+      setTransferError('Please enter a valid recipient UID.');
       return;
     }
 
     setIsTransferring(true);
 
-    setTimeout(() => {
-      const result = executeUserTransfer(user.id, numericUid, amount, transferCurrency);
+    try {
+      const result = await executeUserTransfer(user.id, numericUid, amount, transferCurrency);
       setIsTransferring(false);
       
       if (result.success && result.db) {
@@ -201,7 +201,10 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({
           showToast(result.message || 'Transfer failed.', 'error');
         }
       }
-    }, 1200);
+    } catch (err) {
+      setIsTransferring(false);
+      setTransferError('An error occurred during transfer.');
+    }
   };
 
   // Staking plans / Tiers mapping
@@ -222,7 +225,7 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({
   // Get user's personal transfer history
   const userTransfers = (db.transfers || []).filter(
     t => t.senderUid === user.uid || t.receiverUid === user.uid
-  ).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  ).sort((a, b) => new Date(b.timestamp || b.createdAt || 0).getTime() - new Date(a.timestamp || a.createdAt || 0).getTime());
 
   // Approved Staking/Deposit Records
   const activeDeposits = db.deposits.filter(d => d.userId === user.id && d.status === 'Approved');
@@ -682,13 +685,23 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({
                       animate={{ opacity: 1, y: 0 }}
                       exit={{ opacity: 0, y: -4 }}
                       className={`p-2.5 rounded-xl flex items-center gap-2 text-xs font-medium ${
-                        recipientInfo.success 
-                          ? 'bg-green-500/10 border border-green-500/20 text-green-400' 
-                          : 'bg-red-500/10 border border-red-500/20 text-red-400'
+                        recipientInfo.isOffline
+                          ? 'bg-amber-500/10 border border-amber-500/20 text-amber-400'
+                          : recipientInfo.success 
+                            ? 'bg-green-500/10 border border-green-500/20 text-green-400' 
+                            : 'bg-red-500/10 border border-red-500/20 text-red-400'
                       }`}
                       id="recipient_info_alert"
                     >
-                      {recipientInfo.success ? (
+                      {recipientInfo.isOffline ? (
+                        <>
+                          <Clock className="w-4 h-4 shrink-0 animate-pulse text-amber-400" />
+                          <div className="flex-1">
+                            <span className="block font-bold">Ready to send to: {recipientInfo.name} (UID: {recipientInfo.uid})</span>
+                            <span className="text-[10px] text-amber-400/80 leading-snug mt-0.5 block">{recipientInfo.message}</span>
+                          </div>
+                        </>
+                      ) : recipientInfo.success ? (
                         <>
                           <CheckCircle2 className="w-4 h-4 shrink-0" />
                           <span>Ready to send to: <strong>{recipientInfo.name}</strong> (UID: {recipientInfo.uid})</span>
@@ -804,7 +817,7 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({
                         {isSender ? `To UID: ${tx.receiverUid}` : `From UID: ${tx.senderUid}`}
                       </p>
                       <p className="text-[9px] text-tg-text-muted">
-                        {new Date(tx.createdAt).toLocaleString()}
+                        {new Date(tx.timestamp || tx.createdAt).toLocaleString()}
                       </p>
                     </div>
                   </div>
@@ -812,7 +825,13 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({
                     <p className={`text-xs font-black ${isSender ? 'text-red-400' : 'text-green-400'}`}>
                       {isSender ? '-' : '+'}{tx.currency === 'USDT' ? (tx.amountUSDT || 0).toLocaleString() : (tx.amountTM !== undefined ? tx.amountTM : (tx.amountUSDT || 0)).toLocaleString()} {tx.currency || 'TM'}
                     </p>
-                    <p className="text-[8px] uppercase tracking-wider text-green-400 font-bold">
+                    <p className={`text-[8px] uppercase tracking-wider font-bold ${
+                      tx.status === 'Completed' || tx.status === 'Success'
+                        ? 'text-green-400'
+                        : tx.status === 'Pending'
+                          ? 'text-amber-400 animate-pulse'
+                          : 'text-red-400'
+                    }`}>
                       {tx.status}
                     </p>
                   </div>

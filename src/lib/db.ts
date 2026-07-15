@@ -1865,133 +1865,52 @@ export const processReferralOnDashboardOpen = (userId: string): { success: boole
 };
 
 // User-to-User Transfer using UID
-export const lookupRecipientByUid = (uid: number): { success: boolean; name?: string; uid?: number; message?: string } => {
+export const lookupRecipientByUid = (uid: number): { success: boolean; name?: string; uid?: number; message?: string; isOffline?: boolean } => {
   const db = getDB();
   const user = db.users.find(u => u.uid === uid);
   if (!user) {
-    return { success: false, message: 'Invalid UID. Recipient not found.' };
+    return { 
+      success: true, 
+      name: 'Offline Member', 
+      uid: uid,
+      isOffline: true,
+      message: 'Secure Offline Hold: This member is not registered yet. Funds will be held securely and credited automatically when they join!'
+    };
   }
   return { 
     success: true, 
     name: `${user.firstName} ${user.lastName || ''}`.trim(), 
-    uid: user.uid 
+    uid: user.uid,
+    isOffline: false
   };
 };
 
-export const executeUserTransfer = (
+export const executeUserTransfer = async (
   senderId: string, 
   receiverUid: number, 
   amount: number,
   currency: 'TM' | 'USDT' = 'TM'
-): { success: boolean; message: string; db?: AppDatabase } => {
-  const db = getDB();
-  const sender = db.users.find(u => u.id === senderId);
-  if (!sender) {
-    return { success: false, message: 'Sender profile not found.' };
-  }
-  
-  if (sender.isBanned || sender.isFrozen) {
-    return { success: false, message: 'Your account is currently banned or frozen.' };
-  }
-  
-  if (isNaN(amount) || amount <= 0) {
-    return { success: false, message: 'Transfer amount must be greater than zero.' };
-  }
-  
-  if (sender.uid === receiverUid) {
-    return { success: false, message: 'You cannot send funds to your own UID.' };
-  }
-  
-  const receiver = db.users.find(u => u.uid === receiverUid);
-  if (!receiver) {
-    return { success: false, message: 'Invalid UID. Recipient not found.' };
-  }
-  
-  if (receiver.isBanned || receiver.isFrozen) {
-    return { success: false, message: 'Recipient account is banned or frozen.' };
-  }
-  
-  if (currency === 'USDT') {
-    if (sender.balanceUSDT < amount) {
-      return { success: false, message: `Insufficient USDT balance. You only have $${sender.balanceUSDT.toLocaleString()} USDT.` };
+): Promise<{ success: boolean; message: string; db?: AppDatabase }> => {
+  try {
+    const response = await fetch('/api/transfer', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ senderId, receiverUid, amount })
+    });
+    
+    if (response.ok) {
+      const data = await response.json();
+      if (data.db) {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(data.db));
+      }
+      return data;
+    } else {
+      const err = await response.json();
+      return { success: false, message: err.error || 'Transfer failed.' };
     }
-    // Deduct from sender and credit receiver
-    sender.balanceUSDT = parseFloat((sender.balanceUSDT - amount).toFixed(4));
-    receiver.balanceUSDT = parseFloat((receiver.balanceUSDT + amount).toFixed(4));
-  } else {
-    if (sender.balanceTM < amount) {
-      return { success: false, message: `Insufficient TM balance. You only have ${sender.balanceTM.toLocaleString()} TM.` };
-    }
-    // Deduct from sender and credit receiver
-    sender.balanceTM = parseFloat((sender.balanceTM - amount).toFixed(2));
-    receiver.balanceTM = parseFloat((receiver.balanceTM + amount).toFixed(2));
+  } catch (e: any) {
+    console.error('Error in executeUserTransfer', e);
+    return { success: false, message: 'Server connection failed.' };
   }
-  
-  // Log transfer record in the db
-  if (!db.transfers) {
-    db.transfers = [];
-  }
-  
-  const transferRecord = {
-    id: `transfer_${Date.now()}`,
-    senderUid: sender.uid,
-    receiverUid: receiver.uid,
-    amountTM: currency === 'TM' ? amount : 0,
-    amountUSDT: currency === 'USDT' ? amount : 0,
-    currency,
-    createdAt: new Date().toISOString(),
-    status: 'Success' as const
-  };
-  db.transfers.push(transferRecord);
-  
-  // Add Transaction logs for sender
-  db.transactions.push({
-    id: `tx_sent_${Date.now()}`,
-    userId: sender.id,
-    type: 'TransferSent',
-    amountTM: currency === 'TM' ? -amount : 0,
-    amountUSDT: currency === 'USDT' ? -amount : 0,
-    description: `Transferred ${amount.toLocaleString()} ${currency} to UID ${receiver.uid} (${receiver.firstName})`,
-    createdAt: new Date().toISOString()
-  });
-  
-  // Add Transaction logs for receiver
-  db.transactions.push({
-    id: `tx_recv_${Date.now()}`,
-    userId: receiver.id,
-    type: 'TransferReceived',
-    amountTM: currency === 'TM' ? amount : 0,
-    amountUSDT: currency === 'USDT' ? amount : 0,
-    description: `Received ${amount.toLocaleString()} ${currency} from UID ${sender.uid} (${sender.firstName})`,
-    createdAt: new Date().toISOString()
-  });
-  
-  // Dispatch Notifications
-  if (!db.notifications) {
-    db.notifications = [];
-  }
-  
-  db.notifications.unshift({
-    id: `notif_sent_${Date.now()}`,
-    userId: sender.id,
-    title: 'Transfer Sent! 📤',
-    message: `You successfully transferred ${amount.toLocaleString()} ${currency} to UID ${receiver.uid} (${receiver.firstName}).`,
-    type: 'task_completed',
-    createdAt: new Date().toISOString(),
-    read: false
-  });
-  
-  db.notifications.unshift({
-    id: `notif_recv_${Date.now()}`,
-    userId: receiver.id,
-    title: `${currency} Received! 📥`,
-    message: `You received ${amount.toLocaleString()} ${currency} from UID ${sender.uid} (${sender.firstName}).`,
-    type: 'deposit_approved',
-    createdAt: new Date().toISOString(),
-    read: false
-  });
-  
-  saveDB(db);
-  return { success: true, message: `Successfully transferred ${amount.toLocaleString()} ${currency} to ${receiver.firstName} (UID: ${receiver.uid}).`, db };
 };
 

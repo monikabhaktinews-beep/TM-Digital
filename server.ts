@@ -479,7 +479,57 @@ async function startServer() {
         }
       }
 
+      // AUTOMATIC CLAIM: Check and process pending transfers for this user
+      let claimedTransfers: any[] = [];
+      if (db.transfers && Array.isArray(db.transfers)) {
+        const pendingForUser = db.transfers.filter((t: any) => t.receiverUid === user.uid && t.status === 'Pending');
+        if (pendingForUser.length > 0) {
+          pendingForUser.forEach((t: any) => {
+            // Credit receiver
+            user.balanceTM = parseFloat((user.balanceTM + t.amountTM).toFixed(2));
+            t.status = 'Completed';
+
+            // Create Transaction Received record
+            if (!db.transactions) db.transactions = [];
+            db.transactions.unshift({
+              id: `tx_claim_${t.id}_${Date.now()}`,
+              userId: user.id,
+              type: 'TransferReceived',
+              amountTM: t.amountTM,
+              amountUSDT: 0,
+              description: `Received ${t.amountTM.toLocaleString()} TM from UID ${t.senderUid} (Offline Pending Claim)`,
+              createdAt: new Date().toISOString()
+            });
+
+            // Create notification
+            if (!db.notifications) db.notifications = [];
+            db.notifications.unshift({
+              id: `notif_claim_${t.id}_${Date.now()}`,
+              userId: user.id,
+              title: 'Pending TM Transfer Claimed! 🎉',
+              message: `You received +${t.amountTM.toLocaleString()} TM from UID ${t.senderUid}.`,
+              type: 'deposit_approved',
+              createdAt: new Date().toISOString(),
+              read: false
+            });
+
+            claimedTransfers.push({
+              id: t.id,
+              senderUid: t.senderUid,
+              amountTM: t.amountTM,
+              timestamp: t.timestamp || t.createdAt || new Date().toISOString()
+            });
+          });
+        }
+      }
+
       saveDB(db);
+
+      if (claimedTransfers.length > 0) {
+        db.claimedTransfers = claimedTransfers;
+      } else {
+        delete db.claimedTransfers;
+      }
     }
 
     res.json(db);
@@ -1104,6 +1154,269 @@ async function startServer() {
     }
 
     res.json(report);
+  });
+
+  // -------------------------------------------------------------
+  // USER-TO-USER TRANSFER SYSTEM (WITH OFFLINE UID SUPPORT)
+  // -------------------------------------------------------------
+
+  app.post('/api/transfer', (req, res) => {
+    try {
+      const { senderId, receiverUid, amount } = req.body;
+      const amountNum = parseFloat(amount);
+
+      if (!senderId) {
+        return res.status(400).json({ error: 'Sender ID is required.' });
+      }
+
+      if (isNaN(receiverUid)) {
+        return res.status(400).json({ error: 'Receiver UID must be a valid number.' });
+      }
+
+      if (isNaN(amountNum) || amountNum <= 0) {
+        return res.status(400).json({ error: 'Transfer amount must be greater than zero.' });
+      }
+
+      const db = getDB();
+      if (!db) {
+        return res.status(500).json({ error: 'Database error.' });
+      }
+
+      const sender = db.users.find((u: any) => u.id === senderId);
+      if (!sender) {
+        return res.status(404).json({ error: 'Sender profile not found.' });
+      }
+
+      if (sender.isBanned || sender.isFrozen) {
+        return res.status(403).json({ error: 'Your account is banned or frozen.' });
+      }
+
+      if (sender.uid === receiverUid) {
+        return res.status(400).json({ error: 'You cannot send funds to your own UID.' });
+      }
+
+      if (sender.balanceTM < amountNum) {
+        return res.status(400).json({ error: `Insufficient TM balance. You only have ${sender.balanceTM.toLocaleString()} TM.` });
+      }
+
+      // Deduct balance from sender immediately
+      sender.balanceTM = parseFloat((sender.balanceTM - amountNum).toFixed(2));
+
+      const txId = `tx_transfer_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+      const timestamp = new Date().toISOString();
+
+      const receiver = db.users.find((u: any) => u.uid === receiverUid);
+      let status: 'Pending' | 'Completed' = 'Pending';
+
+      if (receiver) {
+        // Receiver exists - credit immediately
+        receiver.balanceTM = parseFloat((receiver.balanceTM + amountNum).toFixed(2));
+        status = 'Completed';
+
+        // Transaction log for receiver
+        if (!db.transactions) db.transactions = [];
+        db.transactions.unshift({
+          id: `tx_recv_${txId}`,
+          userId: receiver.id,
+          type: 'TransferReceived',
+          amountTM: amountNum,
+          amountUSDT: 0,
+          description: `Received ${amountNum.toLocaleString()} TM from UID ${sender.uid} (${sender.firstName})`,
+          createdAt: timestamp
+        });
+
+        // Notification for receiver
+        if (!db.notifications) db.notifications = [];
+        db.notifications.unshift({
+          id: `notif_recv_${txId}`,
+          userId: receiver.id,
+          title: 'TM Received! 📥',
+          message: `You received ${amountNum.toLocaleString()} TM from UID ${sender.uid} (${sender.firstName}).`,
+          type: 'deposit_approved',
+          createdAt: timestamp,
+          read: false
+        });
+      }
+
+      // Add transfer record to global transfers array
+      if (!db.transfers) db.transfers = [];
+      const transferRecord = {
+        id: txId,
+        senderUid: sender.uid,
+        receiverUid,
+        amountTM: amountNum,
+        status,
+        timestamp
+      };
+      db.transfers.push(transferRecord);
+
+      // Transaction log for sender
+      if (!db.transactions) db.transactions = [];
+      db.transactions.unshift({
+        id: `tx_sent_${txId}`,
+        userId: sender.id,
+        type: 'TransferSent',
+        amountTM: -amountNum,
+        amountUSDT: 0,
+        description: `Transferred ${amountNum.toLocaleString()} TM to UID ${receiverUid}${receiver ? ` (${receiver.firstName})` : ' (Offline Pending claim)'}`,
+        createdAt: timestamp
+      });
+
+      // Notification for sender
+      if (!db.notifications) db.notifications = [];
+      db.notifications.unshift({
+        id: `notif_sent_${txId}`,
+        userId: sender.id,
+        title: 'Transfer Sent! 📤',
+        message: `Successfully transferred ${amountNum.toLocaleString()} TM to UID ${receiverUid}${receiver ? ` (${receiver.firstName})` : ' (Offline Pending claim)'}.`,
+        type: 'task_completed',
+        createdAt: timestamp,
+        read: false
+      });
+
+      saveDB(db);
+
+      res.json({
+        success: true,
+        message: status === 'Completed'
+          ? `Successfully transferred ${amountNum.toLocaleString()} TM to ${receiver.firstName} (UID: ${receiverUid}).`
+          : `Transfer of ${amountNum.toLocaleString()} TM to UID ${receiverUid} submitted successfully as Pending (Recipient offline).`,
+        db,
+        user: sender
+      });
+
+    } catch (err: any) {
+      console.error('[Server Transfer Route Error]', err);
+      res.status(500).json({ error: 'Internal server error: ' + (err.message || String(err)) });
+    }
+  });
+
+  // Cancel Pending Transfer (Refund Sender)
+  app.post('/api/admin/transfer/cancel', (req, res) => {
+    try {
+      const { transferId } = req.body;
+      if (!transferId) {
+        return res.status(400).json({ error: 'Transfer ID is required.' });
+      }
+
+      const db = getDB();
+      if (!db) {
+        return res.status(500).json({ error: 'Database error.' });
+      }
+
+      if (!db.transfers) db.transfers = [];
+      const transfer = db.transfers.find((t: any) => t.id === transferId);
+
+      if (!transfer) {
+        return res.status(404).json({ error: 'Transfer not found.' });
+      }
+
+      if (transfer.status !== 'Pending') {
+        return res.status(400).json({ error: `Cannot cancel a transfer that is already ${transfer.status}.` });
+      }
+
+      const sender = db.users.find((u: any) => u.uid === transfer.senderUid);
+      if (sender) {
+        sender.balanceTM = parseFloat((sender.balanceTM + transfer.amountTM).toFixed(2));
+
+        // Create transaction log for refund
+        if (!db.transactions) db.transactions = [];
+        db.transactions.unshift({
+          id: `tx_refund_${transferId}`,
+          userId: sender.id,
+          type: 'Reward',
+          amountTM: transfer.amountTM,
+          amountUSDT: 0,
+          description: `Admin Refund for cancelled transfer ${transferId} to UID ${transfer.receiverUid}`,
+          createdAt: new Date().toISOString()
+        });
+
+        // Notification for sender
+        if (!db.notifications) db.notifications = [];
+        db.notifications.unshift({
+          id: `notif_refund_${transferId}`,
+          userId: sender.id,
+          title: 'Transfer Refunded 🔄',
+          message: `Your transfer of ${transfer.amountTM.toLocaleString()} TM to UID ${transfer.receiverUid} was cancelled by Admin. Refunded successfully.`,
+          type: 'daily_claimed',
+          createdAt: new Date().toISOString(),
+          read: false
+        });
+      }
+
+      transfer.status = 'Cancelled';
+      saveDB(db);
+
+      res.json({ success: true, db });
+    } catch (err: any) {
+      console.error('[Admin Transfer Cancel Error]', err);
+      res.status(500).json({ error: 'Internal server error: ' + (err.message || String(err)) });
+    }
+  });
+
+  // Force Complete Transfer
+  app.post('/api/admin/transfer/complete', (req, res) => {
+    try {
+      const { transferId } = req.body;
+      if (!transferId) {
+        return res.status(400).json({ error: 'Transfer ID is required.' });
+      }
+
+      const db = getDB();
+      if (!db) {
+        return res.status(500).json({ error: 'Database error.' });
+      }
+
+      if (!db.transfers) db.transfers = [];
+      const transfer = db.transfers.find((t: any) => t.id === transferId);
+
+      if (!transfer) {
+        return res.status(404).json({ error: 'Transfer not found.' });
+      }
+
+      if (transfer.status !== 'Pending') {
+        return res.status(400).json({ error: `Cannot force complete a transfer that is already ${transfer.status}.` });
+      }
+
+      const receiver = db.users.find((u: any) => u.uid === transfer.receiverUid);
+      if (!receiver) {
+        return res.status(400).json({ error: 'Receiver UID is not registered yet. It cannot be force-completed until the user registers (where it will auto-complete), or you can cancel it to refund the sender.' });
+      }
+
+      receiver.balanceTM = parseFloat((receiver.balanceTM + transfer.amountTM).toFixed(2));
+
+      // Create transaction log for receiver
+      if (!db.transactions) db.transactions = [];
+      db.transactions.unshift({
+        id: `tx_recv_${transferId}`,
+        userId: receiver.id,
+        type: 'TransferReceived',
+        amountTM: transfer.amountTM,
+        amountUSDT: 0,
+        description: `Received ${transfer.amountTM.toLocaleString()} TM from UID ${transfer.senderUid} (Force completed by Admin)`,
+        createdAt: new Date().toISOString()
+      });
+
+      // Notification for receiver
+      if (!db.notifications) db.notifications = [];
+      db.notifications.unshift({
+        id: `notif_recv_${transferId}`,
+        userId: receiver.id,
+        title: 'TM Received (Admin Complete) 📥',
+        message: `Admin force completed transfer from UID ${transfer.senderUid}. You received +${transfer.amountTM.toLocaleString()} TM.`,
+        type: 'deposit_approved',
+        createdAt: new Date().toISOString(),
+        read: false
+      });
+
+      transfer.status = 'Completed';
+      saveDB(db);
+
+      res.json({ success: true, db });
+    } catch (err: any) {
+      console.error('[Admin Transfer Complete Error]', err);
+      res.status(500).json({ error: 'Internal server error: ' + (err.message || String(err)) });
+    }
   });
 
   // -------------------------------------------------------------

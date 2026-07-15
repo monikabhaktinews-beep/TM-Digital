@@ -30,6 +30,7 @@ export default function App() {
   // Notification center and Toast states
   const [showNotifCenter, setShowNotifCenter] = useState<boolean>(false);
   const [toasts, setToasts] = useState<{ id: string; type: 'success' | 'error' | 'info' | 'pending'; message: string }[]>([]);
+  const [claimsToCelebrate, setClaimsToCelebrate] = useState<any[] | null>(null);
 
   const showToast = (message: string, type: 'success' | 'error' | 'info' | 'pending' = 'success') => {
     const id = `toast_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
@@ -112,6 +113,9 @@ export default function App() {
         setDb(serverDb);
         const profile = serverDb.users.find(u => u.id === activeUser.id) || getUserProfile(activeUser);
         setUserProfile(profile);
+        if (serverDb.claimedTransfers && Array.isArray(serverDb.claimedTransfers) && serverDb.claimedTransfers.length > 0) {
+          setClaimsToCelebrate(serverDb.claimedTransfers);
+        }
       }
     };
     fetchServerDB();
@@ -570,6 +574,65 @@ export default function App() {
             onUpdateState={handleStateUpdate}
             onClose={() => setShowNotifCenter(false)}
           />
+        )}
+      </AnimatePresence>
+
+      {/* Offline TM claims celebration modal */}
+      <AnimatePresence>
+        {claimsToCelebrate && claimsToCelebrate.length > 0 && (
+          <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 bg-black/85 backdrop-blur-sm"
+              onClick={() => setClaimsToCelebrate(null)}
+            />
+            
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9, y: 15 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 10 }}
+              className="relative w-full max-w-sm bg-tg-surface rounded-3xl border border-emerald-500/30 overflow-hidden shadow-2xl p-6 text-center space-y-4"
+            >
+              {/* Pulsing visual element */}
+              <div className="mx-auto w-16 h-16 rounded-full bg-gradient-to-br from-emerald-500 to-green-600 flex items-center justify-center border border-emerald-400/40 shadow-xl shadow-emerald-500/20">
+                <CheckSquare className="w-8 h-8 text-white animate-pulse" />
+              </div>
+
+              <div className="space-y-1.5">
+                <h3 className="text-lg font-black text-white uppercase tracking-tight">Offline Claims Credited! 🎉</h3>
+                <p className="text-xs text-tg-text-muted">
+                  Welcome back! Other members sent you TM tokens while you were offline. The master server has securely held and automatically claimed them for your balance:
+                </p>
+              </div>
+
+              {/* List of claimed transfers */}
+              <div className="bg-tg-dark/50 border border-white/5 rounded-2xl p-3.5 max-h-40 overflow-y-auto space-y-2 text-left">
+                {claimsToCelebrate.map((claim, index) => (
+                  <div key={claim.id || index} className="flex items-center justify-between py-1 border-b border-white/5 last:border-none">
+                    <div className="text-xs">
+                      <span className="font-bold text-white block">From UID: {claim.senderUid}</span>
+                      <span className="text-[10px] text-tg-text-muted font-medium font-mono">Auto-cleared successfully</span>
+                    </div>
+                    <div className="text-right">
+                      <span className="text-xs font-black text-emerald-400">+{claim.amountTM.toLocaleString()} TM</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <button
+                onClick={() => {
+                  setClaimsToCelebrate(null);
+                  showToast(`🎉 Successfully redeemed offline transfers!`, 'success');
+                }}
+                className="w-full py-3 bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-400 hover:to-emerald-500 text-white font-bold rounded-2xl text-xs shadow-md shadow-emerald-500/10 cursor-pointer flex items-center justify-center gap-1.5 active:scale-95 transition-all"
+              >
+                <span>REDEEMED & CREDITED!</span>
+              </button>
+            </motion.div>
+          </div>
         )}
       </AnimatePresence>
 
