@@ -9,8 +9,8 @@
       "languageCode": "en",
       "registeredAt": "2026-06-01T12:00:00Z",
       "balanceTM": 4200,
-      "balanceUSDT": 1.619,
-      "lifetimeEarningsUSDT": 4.619,
+      "balanceUSDT": 4.753,
+      "lifetimeEarningsUSDT": 7.753,
       "referralEarningsUSDT": 1.2,
       "todayBonusUSDT": 0.462,
       "depositStatus": "Approved",
@@ -30,8 +30,8 @@
       "languageCode": "en",
       "registeredAt": "2026-07-10T15:30:00Z",
       "balanceTM": 1500,
-      "balanceUSDT": 0.33,
-      "lifetimeEarningsUSDT": 0.33,
+      "balanceUSDT": 1.485,
+      "lifetimeEarningsUSDT": 1.485,
       "referralEarningsUSDT": 0,
       "todayBonusUSDT": 0.165,
       "depositStatus": "Approved",
@@ -50,8 +50,8 @@
       "languageCode": "de",
       "registeredAt": "2026-07-05T09:15:00Z",
       "balanceTM": 1500,
-      "balanceUSDT": 0.83,
-      "lifetimeEarningsUSDT": 0.83,
+      "balanceUSDT": 1.985,
+      "lifetimeEarningsUSDT": 1.985,
       "referralEarningsUSDT": 0,
       "todayBonusUSDT": 0.165,
       "depositStatus": "Approved",
@@ -100,6 +100,27 @@
       "isFrozen": false,
       "isBanned": true,
       "uid": 117305
+    },
+    {
+      "id": "117307",
+      "username": "user_117307",
+      "firstName": "VIP User",
+      "lastName": "",
+      "photoUrl": "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=120&h=120&fit=crop&crop=faces",
+      "languageCode": "en",
+      "registeredAt": "2026-07-15T00:00:00Z",
+      "balanceTM": 50000,
+      "balanceUSDT": 500.0,
+      "lifetimeEarningsUSDT": 500.0,
+      "referralEarningsUSDT": 0.0,
+      "todayBonusUSDT": 0.0,
+      "depositStatus": "None",
+      "withdrawStatus": "None",
+      "referralCount": 0,
+      "isFrozen": false,
+      "isBanned": false,
+      "mandatoryCompleted": true,
+      "uid": 117307
     }
   ],
   "tasks": [
@@ -250,15 +271,6 @@
   ],
   "withdrawalRules": [],
   "transactions": [
-    {
-      "id": "tx_gift_1784035853142_lxz8w",
-      "userId": "111111111",
-      "type": "Reward",
-      "amountTM": 0,
-      "amountUSDT": 0.1,
-      "description": "Gift Code Claimed: TM-GFT-8WYS-THD7",
-      "createdAt": "2026-07-14T13:30:53.142Z"
-    },
     {
       "id": "tx_task_1783930504631",
       "userId": "111111111",
@@ -474,6 +486,195 @@
       "amountUSDT": 0.165,
       "description": "Automatic 12:01 AM Staking Interest (1,500 TM holding)",
       "createdAt": "2026-07-13T18:31:00.000Z"
+    },
+    {
+      "id": "interest_auto_111111111_1784053860000",
+      "userId": "111111111",
+      "type": "DailyBonus",
+      "amountTM": 0,
+      "amountUSDT": 0.462,
+      "description": "Automatic 12:01 AM Staking Interest (4,200 TM holding)",
+      "createdAt": "2026-07-14T18:31:00.000Z"
+    },
+    {
+      "id": "interest_auto_222222222_1784053860000",
+      "userId": "222222222",
+      "type": "DailyBonus",
+      "amountTM": 0,
+      "amountUSDT": 0.165,
+      "description": "Automatic 12:01 AM Staking Interest (1,500 TM holding)",
+      "createdAt": "2026-07-14T18:31:00.000Z"
+    },
+    {
+      "id": "interest_auto_333333333_1784053860000",
+      "userId": "333333333",
+      "type": "DailyBonus",
+      "amountTM": 0,
+      "amountUSDT": 0.165,
+      "description": "Automatic 12:01 AM Staking Interest (1,500 TM holding)",
+      "createdAt": "2026-07-14T18:31:00.000Z"
+    },
+    {
+      "id": "interest_auto_111111111_1784053860000",
+      "userId": "111111111",
+      "type": "DailyBonus",
+      "amountTM": 0,
+      "amountUSDT": 0.462,
+      "description": "Automatic 12:01 AM Staking Interest (4,200 TM holding)",
+      "createdAt": "2026-07-14T18:31:00.000Z"
+    },
+    {
+      "id": "interest_auto_222222222_1784053860000",
+      "userId": "222222222",
+      "type": "DailyBonus",
+      "amountTM": 0,
+      "amountUSDT": 0.165,
+      "description": "Automatic 12:01 AM Staking Interest (1,500 TM holding)",
+      "createdAt": "2026-07-14T18:31:00.000Z"
+    },
+    {
+      "id": "interest_auto_333333333_1784053860000",
+      "userId": "333333333",
+      "type": "DailyBonus",
+      "amountTM": 0,
+      "amountUSDT": 0.165,
+      "description": "Automatic 12:01 AM Staking Interest (1,500 TM holding)",
+      "createdAt": "2026-07-14T18:31:00.000Z"
+    },
+    {
+      "id": "interest_auto_111111111_1784053860000",
+      "userId": "111111111",
+      "type": "DailyBonus",
+      "amountTM": 0,
+      "amountUSDT": 0.462,
+      "description": "Automatic 12:01 AM Staking Interest (4,200 TM holding)",
+      "createdAt": "2026-07-14T18:31:00.000Z"
+    },
+    {
+      "id": "interest_auto_222222222_1784053860000",
+      "userId": "222222222",
+      "type": "DailyBonus",
+      "amountTM": 0,
+      "amountUSDT": 0.165,
+      "description": "Automatic 12:01 AM Staking Interest (1,500 TM holding)",
+      "createdAt": "2026-07-14T18:31:00.000Z"
+    },
+    {
+      "id": "interest_auto_333333333_1784053860000",
+      "userId": "333333333",
+      "type": "DailyBonus",
+      "amountTM": 0,
+      "amountUSDT": 0.165,
+      "description": "Automatic 12:01 AM Staking Interest (1,500 TM holding)",
+      "createdAt": "2026-07-14T18:31:00.000Z"
+    },
+    {
+      "id": "interest_auto_111111111_1784053860000",
+      "userId": "111111111",
+      "type": "DailyBonus",
+      "amountTM": 0,
+      "amountUSDT": 0.462,
+      "description": "Automatic 12:01 AM Staking Interest (4,200 TM holding)",
+      "createdAt": "2026-07-14T18:31:00.000Z"
+    },
+    {
+      "id": "interest_auto_222222222_1784053860000",
+      "userId": "222222222",
+      "type": "DailyBonus",
+      "amountTM": 0,
+      "amountUSDT": 0.165,
+      "description": "Automatic 12:01 AM Staking Interest (1,500 TM holding)",
+      "createdAt": "2026-07-14T18:31:00.000Z"
+    },
+    {
+      "id": "interest_auto_333333333_1784053860000",
+      "userId": "333333333",
+      "type": "DailyBonus",
+      "amountTM": 0,
+      "amountUSDT": 0.165,
+      "description": "Automatic 12:01 AM Staking Interest (1,500 TM holding)",
+      "createdAt": "2026-07-14T18:31:00.000Z"
+    },
+    {
+      "id": "interest_auto_111111111_1784053860000",
+      "userId": "111111111",
+      "type": "DailyBonus",
+      "amountTM": 0,
+      "amountUSDT": 0.462,
+      "description": "Automatic 12:01 AM Staking Interest (4,200 TM holding)",
+      "createdAt": "2026-07-14T18:31:00.000Z"
+    },
+    {
+      "id": "interest_auto_222222222_1784053860000",
+      "userId": "222222222",
+      "type": "DailyBonus",
+      "amountTM": 0,
+      "amountUSDT": 0.165,
+      "description": "Automatic 12:01 AM Staking Interest (1,500 TM holding)",
+      "createdAt": "2026-07-14T18:31:00.000Z"
+    },
+    {
+      "id": "interest_auto_333333333_1784053860000",
+      "userId": "333333333",
+      "type": "DailyBonus",
+      "amountTM": 0,
+      "amountUSDT": 0.165,
+      "description": "Automatic 12:01 AM Staking Interest (1,500 TM holding)",
+      "createdAt": "2026-07-14T18:31:00.000Z"
+    },
+    {
+      "id": "interest_auto_111111111_1784053860000",
+      "userId": "111111111",
+      "type": "DailyBonus",
+      "amountTM": 0,
+      "amountUSDT": 0.462,
+      "description": "Automatic 12:01 AM Staking Interest (4,200 TM holding)",
+      "createdAt": "2026-07-14T18:31:00.000Z"
+    },
+    {
+      "id": "interest_auto_222222222_1784053860000",
+      "userId": "222222222",
+      "type": "DailyBonus",
+      "amountTM": 0,
+      "amountUSDT": 0.165,
+      "description": "Automatic 12:01 AM Staking Interest (1,500 TM holding)",
+      "createdAt": "2026-07-14T18:31:00.000Z"
+    },
+    {
+      "id": "interest_auto_333333333_1784053860000",
+      "userId": "333333333",
+      "type": "DailyBonus",
+      "amountTM": 0,
+      "amountUSDT": 0.165,
+      "description": "Automatic 12:01 AM Staking Interest (1,500 TM holding)",
+      "createdAt": "2026-07-14T18:31:00.000Z"
+    },
+    {
+      "id": "interest_auto_111111111_1784053860000",
+      "userId": "111111111",
+      "type": "DailyBonus",
+      "amountTM": 0,
+      "amountUSDT": 0.462,
+      "description": "Automatic 12:01 AM Staking Interest (4,200 TM holding)",
+      "createdAt": "2026-07-14T18:31:00.000Z"
+    },
+    {
+      "id": "interest_auto_222222222_1784053860000",
+      "userId": "222222222",
+      "type": "DailyBonus",
+      "amountTM": 0,
+      "amountUSDT": 0.165,
+      "description": "Automatic 12:01 AM Staking Interest (1,500 TM holding)",
+      "createdAt": "2026-07-14T18:31:00.000Z"
+    },
+    {
+      "id": "interest_auto_333333333_1784053860000",
+      "userId": "333333333",
+      "type": "DailyBonus",
+      "amountTM": 0,
+      "amountUSDT": 0.165,
+      "description": "Automatic 12:01 AM Staking Interest (1,500 TM holding)",
+      "createdAt": "2026-07-14T18:31:00.000Z"
     }
   ],
   "transfers": [],
@@ -586,15 +787,6 @@
   "claimedBonuses": {},
   "taskSubmissions": [],
   "notifications": [
-    {
-      "id": "notif_gift_1784035853142_cey4z",
-      "userId": "111111111",
-      "title": "Gift Code Claimed! 🎁",
-      "message": "Successfully claimed code TM-GFT-8WYS-THD7! received +$0.10 USDT.",
-      "type": "task_completed",
-      "createdAt": "2026-07-14T13:30:53.142Z",
-      "read": false
-    },
     {
       "id": "notif_1783930504632_task_mandatory_channel_3",
       "userId": "111111111",

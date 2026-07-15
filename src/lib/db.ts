@@ -7,7 +7,7 @@ let currentActiveUserId: string | null = null;
 // Initial Mock Setup
 const DEFAULT_SETTINGS: SystemSettings = {
   conversionRate: 1000, // 1 USDT = 1000 TM
-  referralRewardUSDT: 0.02, // 0.02 USDT per referral
+  referralRewardUSDT: 0.03, // 0.03 USDT per referral
   referralRewardTM: 100, // 100 TM Referral reward
   dailyBonusRateUSDT: 0.11, // 0.11 USDT per 1000 TM
   dailyBonusIntervalHours: 24,
@@ -199,6 +199,26 @@ const DEFAULT_USERS: UserProfile[] = [
     referralCount: 0,
     isFrozen: false,
     isBanned: true
+  },
+  {
+    uid: 117307,
+    id: "117307",
+    username: "user_117307",
+    firstName: "VIP User",
+    lastName: "",
+    photoUrl: "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=120&h=120&fit=crop&crop=faces",
+    languageCode: "en",
+    registeredAt: "2026-07-15T00:00:00Z",
+    balanceTM: 50000,
+    balanceUSDT: 500.0,
+    lifetimeEarningsUSDT: 500.0,
+    referralEarningsUSDT: 0.0,
+    todayBonusUSDT: 0.0,
+    depositStatus: 'None',
+    withdrawStatus: 'None',
+    referralCount: 0,
+    isFrozen: false,
+    isBanned: false
   }
 ];
 
@@ -852,7 +872,7 @@ export const getUserProfile = (tgUser: { id: string; username?: string; firstNam
             user.referralCounted = true;
             
             const referralRewardTM = db.settings.referralRewardTM ?? 100;
-            const referralRewardUSDT = db.settings.referralRewardUSDT ?? 0.02;
+            const referralRewardUSDT = db.settings.referralRewardUSDT ?? 0.03;
 
             referrer.balanceTM = (referrer.balanceTM || 0) + referralRewardTM;
             referrer.referralEarningsTM = (referrer.referralEarningsTM || 0) + referralRewardTM;

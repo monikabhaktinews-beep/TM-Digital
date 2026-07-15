@@ -7,6 +7,7 @@ import DepositTab from './components/DepositTab';
 import WithdrawTab from './components/WithdrawTab';
 import { ProfileTab } from './components/ProfileTab';
 import { GiftCodeTab } from './components/GiftCodeTab';
+import { ReferralTab } from './components/ReferralTab';
 import SupportTab from './components/SupportTab';
 import AdminPanel from './components/AdminPanel';
 import { MandatoryTasksPopup } from './components/MandatoryTasksPopup';
@@ -351,6 +352,14 @@ export default function App() {
                 db={db} 
                 onUpdateState={handleStateUpdate} 
                 onNavigateToTab={navigateToTab}
+                showToast={showToast}
+              />
+            )}
+
+            {activeTab === 'referral' && (
+              <ReferralTab 
+                user={userProfile} 
+                db={db} 
                 showToast={showToast}
               />
             )}

@@ -431,7 +431,7 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({
           </div>
           <div>
             <h4 className="text-xs font-extrabold text-white">Refer Friend</h4>
-            <span className="text-[9px] text-tg-text-muted font-medium mt-0.5 block font-bold text-amber-400">Earn $28</span>
+            <span className="text-[9px] text-tg-text-muted font-medium mt-0.5 block font-bold text-amber-400">Earn $0.03 + $3.00</span>
           </div>
         </div>
       </div>
