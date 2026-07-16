@@ -4,12 +4,13 @@ import fs from 'fs';
 import { createServer as createViteServer } from 'vite';
 import dotenv from 'dotenv';
 import crypto from 'crypto';
+import Database from 'better-sqlite3';
 
 // Load env variables
 dotenv.config();
 
 const PORT = 3000;
-const DB_FILE = path.join(process.cwd(), 'server_db.json');
+const DB_FILE = path.join(process.cwd(), 'd1_database.db');
 
 // Helper to check if a ID is mock
 const isMockUser = (userId: string) => {
@@ -19,7 +20,7 @@ const isMockUser = (userId: string) => {
 // Default Database Setup
 const DEFAULT_SETTINGS = {
   conversionRate: 1000,
-  referralRewardUSDT: 0.03,
+  referralRewardUSDT: 0.05,
   referralRewardTM: 100,
   dailyBonusRateUSDT: 0.11,
   dailyBonusIntervalHours: 24,
@@ -192,121 +193,1151 @@ const DEFAULT_COMPLETED_TASKS = {
   "222222222": ["mandatory_channel_1"]
 };
 
-// Initialize database file
+const SQLITE_DB_PATH = path.join(process.cwd(), 'd1_database.db');
+const sqliteDb = new Database(SQLITE_DB_PATH);
+
+// Initialize database schema and seed if necessary
 function initDatabase() {
-  if (!fs.existsSync(DB_FILE)) {
-    const initialDb = {
-      users: DEFAULT_USERS,
-      tasks: DEFAULT_TASKS,
-      channels: [],
-      deposits: [],
-      withdrawals: [],
-      withdrawalRules: [],
-      transactions: [],
-      transfers: [],
-      tickets: [],
-      settings: DEFAULT_SETTINGS,
-      completedTasks: DEFAULT_COMPLETED_TASKS,
-      claimedBonuses: {},
-      taskSubmissions: [],
-      notifications: [],
-      lastInterestPayout: new Date().toISOString()
-    };
-    fs.writeFileSync(DB_FILE, JSON.stringify(initialDb, null, 2), 'utf8');
+  sqliteDb.exec(`
+    CREATE TABLE IF NOT EXISTS settings (
+      key TEXT PRIMARY KEY,
+      value TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS users (
+      id TEXT PRIMARY KEY,
+      uid INTEGER UNIQUE,
+      username TEXT,
+      firstName TEXT,
+      lastName TEXT,
+      photoUrl TEXT,
+      languageCode TEXT,
+      registeredAt TEXT,
+      balanceTM REAL DEFAULT 0,
+      balanceUSDT REAL DEFAULT 0,
+      lifetimeEarningsUSDT REAL DEFAULT 0,
+      referralEarningsUSDT REAL DEFAULT 0,
+      todayBonusUSDT REAL DEFAULT 0,
+      depositStatus TEXT DEFAULT 'None',
+      withdrawStatus TEXT DEFAULT 'None',
+      referralCount INTEGER DEFAULT 0,
+      isFrozen INTEGER DEFAULT 0,
+      isBanned INTEGER DEFAULT 0,
+      mandatoryCompleted INTEGER DEFAULT 0,
+      referredBy TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS transfers (
+      id TEXT PRIMARY KEY,
+      senderUid INTEGER,
+      receiverUid INTEGER,
+      amountTM REAL,
+      status TEXT,
+      timestamp TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS withdrawals (
+      id TEXT PRIMARY KEY,
+      userId TEXT,
+      amountUSDT REAL,
+      amountTM REAL,
+      address TEXT,
+      network TEXT,
+      status TEXT,
+      createdAt TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS deposits (
+      id TEXT PRIMARY KEY,
+      userId TEXT,
+      amountUSDT REAL,
+      txHash TEXT,
+      status TEXT,
+      createdAt TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS transactions (
+      id TEXT PRIMARY KEY,
+      userId TEXT,
+      type TEXT,
+      amountTM REAL,
+      amountUSDT REAL,
+      description TEXT,
+      createdAt TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS gift_codes (
+      code TEXT PRIMARY KEY,
+      rewardTM REAL,
+      rewardUSDT REAL,
+      rewardAmount REAL DEFAULT 0,
+      maxClaims INTEGER,
+      claimsCount INTEGER DEFAULT 0,
+      claimedCount INTEGER DEFAULT 0,
+      createdAt TEXT,
+      expiryDate TEXT,
+      expiresAt TEXT,
+      isEnabled INTEGER DEFAULT 1,
+      claimedBy TEXT DEFAULT '[]'
+    );
+
+    CREATE TABLE IF NOT EXISTS completed_tasks (
+      userId TEXT,
+      taskId TEXT,
+      PRIMARY KEY (userId, taskId)
+    );
+
+    CREATE TABLE IF NOT EXISTS tasks (
+      id TEXT PRIMARY KEY,
+      title TEXT,
+      description TEXT,
+      type TEXT,
+      rewardTM REAL,
+      link TEXT,
+      isMandatory INTEGER,
+      displayOrder INTEGER,
+      isEnabled INTEGER,
+      requiresVerification INTEGER,
+      channelId TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS tickets (
+      id TEXT PRIMARY KEY,
+      userId TEXT,
+      subject TEXT,
+      message TEXT,
+      status TEXT,
+      createdAt TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS claimed_bonuses (
+      userId TEXT,
+      dayKey TEXT,
+      PRIMARY KEY (userId, dayKey)
+    );
+  `);
+
+  // Seed default tasks
+  const tasksCount = (sqliteDb.prepare('SELECT COUNT(*) as count FROM tasks').get() as any)?.count || 0;
+  if (tasksCount === 0) {
+    const insertTask = sqliteDb.prepare(`
+      INSERT INTO tasks (id, title, description, type, rewardTM, link, isMandatory, displayOrder, isEnabled, requiresVerification, channelId)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    for (const t of DEFAULT_TASKS) {
+      insertTask.run(t.id, t.title, t.description, t.type, t.rewardTM, t.link, t.isMandatory ? 1 : 0, t.displayOrder, t.isEnabled ? 1 : 0, t.requiresVerification ? 1 : 0, t.channelId || '');
+    }
   }
+
+  // Seed default settings
+  const settingsCount = (sqliteDb.prepare('SELECT COUNT(*) as count FROM settings').get() as any)?.count || 0;
+  if (settingsCount === 0) {
+    const defaultSettings: Record<string, string> = {
+      conversionRate: "1000",
+      referralRewardUSDT: "0.05",
+      referralRewardTM: "100",
+      dailyBonusRateUSDT: "0.11",
+      dailyBonusIntervalHours: "24",
+      dailyBonusEnabled: "true",
+      walletAddressUSDT: "0x2FD17882dB69E7eA50E463dBaD37dCD3C2C0d592",
+      qrCodeUrl: "https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=0x2FD17882dB69E7eA50E463dBaD37dCD3C2C0d592",
+      autoApprovalEnabled: "false",
+      maintenanceMode: "false",
+      announcement: "📢 TM Digital v1.2 Live! Complete your mandatory tasks to unlock your premium staking dashboard.",
+      mandatoryTaskCount: "3",
+      depositMinUSDT: "1.0",
+      withdrawEnabled: "true",
+      withdrawDisabledMessage: "🚫 Withdrawals are temporarily unavailable. Please try again later.",
+      referralSystemEnabled: "true",
+      referralRewardAmountUSD: "3.0",
+      referralMinWithdrawRequirementUSD: "10.0"
+    };
+
+    const insertSetting = sqliteDb.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)');
+    for (const [k, v] of Object.entries(defaultSettings)) {
+      insertSetting.run(k, v);
+    }
+  }
+
+  // Seed default users
+  const usersCount = (sqliteDb.prepare('SELECT COUNT(*) as count FROM users').get() as any)?.count || 0;
+  if (usersCount === 0) {
+    const insertUser = sqliteDb.prepare(`
+      INSERT INTO users (id, uid, username, firstName, lastName, photoUrl, languageCode, registeredAt, balanceTM, balanceUSDT, lifetimeEarningsUSDT, referralEarningsUSDT, todayBonusUSDT, depositStatus, withdrawStatus, referralCount, isFrozen, isBanned, mandatoryCompleted, referredBy)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    for (const u of DEFAULT_USERS) {
+      insertUser.run(
+        u.id, u.uid, u.username, u.firstName, u.lastName, u.photoUrl, u.languageCode, u.registeredAt,
+        u.balanceTM, u.balanceUSDT, u.lifetimeEarningsUSDT, u.referralEarningsUSDT, u.todayBonusUSDT,
+        u.depositStatus, u.withdrawStatus, u.referralCount, u.isFrozen ? 1 : 0, u.isBanned ? 1 : 0, u.mandatoryCompleted ? 1 : 0, null
+      );
+    }
+
+    const insertCompleted = sqliteDb.prepare('INSERT OR IGNORE INTO completed_tasks (userId, taskId) VALUES (?, ?)');
+    for (const [userId, taskIds] of Object.entries(DEFAULT_COMPLETED_TASKS)) {
+      for (const taskId of taskIds) {
+        insertCompleted.run(userId, taskId);
+      }
+    }
+  }
+
+  // Run migrations for gift_codes table if columns are missing in existing database
+  try {
+    sqliteDb.exec(`ALTER TABLE gift_codes ADD COLUMN rewardAmount REAL DEFAULT 0;`);
+  } catch (e) {}
+  try {
+    sqliteDb.exec(`ALTER TABLE gift_codes ADD COLUMN claimsCount INTEGER DEFAULT 0;`);
+  } catch (e) {}
+  try {
+    sqliteDb.exec(`ALTER TABLE gift_codes ADD COLUMN expiryDate TEXT;`);
+  } catch (e) {}
+  try {
+    sqliteDb.exec(`ALTER TABLE gift_codes ADD COLUMN isEnabled INTEGER DEFAULT 1;`);
+  } catch (e) {}
+  try {
+    sqliteDb.exec(`ALTER TABLE gift_codes ADD COLUMN claimedBy TEXT DEFAULT '[]';`);
+  } catch (e) {}
 }
 
-// Get DB helper
-function getDB() {
-  initDatabase();
+// Helper to get D1 instance or fallback to local
+function getActiveD1(req?: any): any {
+  if (req && req.env && req.env.DB) return req.env.DB;
+  if ((globalThis as any).env && (globalThis as any).env.DB) return (globalThis as any).env.DB;
+  if ((globalThis as any).DB) return (globalThis as any).DB;
+  return null;
+}
+
+// D1 Auto-Initialization and Seeding
+async function initD1Database(db: any) {
   try {
-    const content = fs.readFileSync(DB_FILE, 'utf8');
-    const parsed = JSON.parse(content);
-    // Ensure default settings and tasks exist
-    parsed.settings = { ...DEFAULT_SETTINGS, ...parsed.settings };
+    await db.prepare('SELECT COUNT(*) FROM settings').first();
+  } catch (err) {
+    console.log('[D1 Auto-Init] Tables not found. Initializing D1 tables...');
     
-    // Ensure all collection arrays and objects exist to prevent unshift/push errors on old databases
-    if (!parsed.transactions || !Array.isArray(parsed.transactions)) {
-      parsed.transactions = [];
-    }
-    if (!parsed.giftCodes || !Array.isArray(parsed.giftCodes)) {
-      parsed.giftCodes = [];
-    }
-    if (!parsed.notifications || !Array.isArray(parsed.notifications)) {
-      parsed.notifications = [];
-    }
-    if (!parsed.channels || !Array.isArray(parsed.channels)) {
-      parsed.channels = [];
-    }
-    if (!parsed.deposits || !Array.isArray(parsed.deposits)) {
-      parsed.deposits = [];
-    }
-    if (!parsed.withdrawals || !Array.isArray(parsed.withdrawals)) {
-      parsed.withdrawals = [];
-    }
-    if (!parsed.withdrawalRules || !Array.isArray(parsed.withdrawalRules)) {
-      parsed.withdrawalRules = [];
-    }
-    if (!parsed.transfers || !Array.isArray(parsed.transfers)) {
-      parsed.transfers = [];
-    }
-    if (!parsed.tickets || !Array.isArray(parsed.tickets)) {
-      parsed.tickets = [];
-    }
-    if (!parsed.completedTasks || typeof parsed.completedTasks !== 'object') {
-      parsed.completedTasks = {};
-    }
-    if (!parsed.claimedBonuses || typeof parsed.claimedBonuses !== 'object') {
-      parsed.claimedBonuses = {};
-    }
-    if (!parsed.taskSubmissions || !Array.isArray(parsed.taskSubmissions)) {
-      parsed.taskSubmissions = [];
+    // Create all tables
+    await db.prepare(`
+      CREATE TABLE IF NOT EXISTS settings (
+        key TEXT PRIMARY KEY,
+        value TEXT
+      );
+    `).run();
+    await db.prepare(`
+      CREATE TABLE IF NOT EXISTS users (
+        id TEXT PRIMARY KEY,
+        uid INTEGER UNIQUE,
+        username TEXT,
+        firstName TEXT,
+        lastName TEXT,
+        photoUrl TEXT,
+        languageCode TEXT,
+        registeredAt TEXT,
+        balanceTM REAL DEFAULT 0,
+        balanceUSDT REAL DEFAULT 0,
+        lifetimeEarningsUSDT REAL DEFAULT 0,
+        referralEarningsUSDT REAL DEFAULT 0,
+        todayBonusUSDT REAL DEFAULT 0,
+        depositStatus TEXT DEFAULT 'None',
+        withdrawStatus TEXT DEFAULT 'None',
+        referralCount INTEGER DEFAULT 0,
+        isFrozen INTEGER DEFAULT 0,
+        isBanned INTEGER DEFAULT 0,
+        mandatoryCompleted INTEGER DEFAULT 0,
+        referredBy TEXT
+      );
+    `).run();
+    await db.prepare(`
+      CREATE TABLE IF NOT EXISTS transfers (
+        id TEXT PRIMARY KEY,
+        senderUid INTEGER,
+        receiverUid INTEGER,
+        amountTM REAL,
+        status TEXT,
+        timestamp TEXT
+      );
+    `).run();
+    await db.prepare(`
+      CREATE TABLE IF NOT EXISTS withdrawals (
+        id TEXT PRIMARY KEY,
+        userId TEXT,
+        amountUSDT REAL,
+        amountTM REAL,
+        address TEXT,
+        network TEXT,
+        status TEXT,
+        createdAt TEXT
+      );
+    `).run();
+    await db.prepare(`
+      CREATE TABLE IF NOT EXISTS deposits (
+        id TEXT PRIMARY KEY,
+        userId TEXT,
+        amountUSDT REAL,
+        txHash TEXT,
+        status TEXT,
+        createdAt TEXT
+      );
+    `).run();
+    await db.prepare(`
+      CREATE TABLE IF NOT EXISTS transactions (
+        id TEXT PRIMARY KEY,
+        userId TEXT,
+        type TEXT,
+        amountTM REAL,
+        amountUSDT REAL,
+        description TEXT,
+        createdAt TEXT
+      );
+    `).run();
+    await db.prepare(`
+      CREATE TABLE IF NOT EXISTS gift_codes (
+        code TEXT PRIMARY KEY,
+        rewardTM REAL,
+        rewardUSDT REAL,
+        rewardAmount REAL DEFAULT 0,
+        maxClaims INTEGER,
+        claimsCount INTEGER DEFAULT 0,
+        claimedCount INTEGER DEFAULT 0,
+        createdAt TEXT,
+        expiryDate TEXT,
+        expiresAt TEXT,
+        isEnabled INTEGER DEFAULT 1,
+        claimedBy TEXT DEFAULT '[]'
+      );
+    `).run();
+    await db.prepare(`
+      CREATE TABLE IF NOT EXISTS completed_tasks (
+        userId TEXT,
+        taskId TEXT,
+        PRIMARY KEY (userId, taskId)
+      );
+    `).run();
+    await db.prepare(`
+      CREATE TABLE IF NOT EXISTS tasks (
+        id TEXT PRIMARY KEY,
+        title TEXT,
+        description TEXT,
+        type TEXT,
+        rewardTM REAL,
+        link TEXT,
+        isMandatory INTEGER,
+        displayOrder INTEGER,
+        isEnabled INTEGER,
+        requiresVerification INTEGER,
+        channelId TEXT
+      );
+    `).run();
+    await db.prepare(`
+      CREATE TABLE IF NOT EXISTS tickets (
+        id TEXT PRIMARY KEY,
+        userId TEXT,
+        subject TEXT,
+        message TEXT,
+        status TEXT,
+        createdAt TEXT
+      );
+    `).run();
+    await db.prepare(`
+      CREATE TABLE IF NOT EXISTS claimed_bonuses (
+        userId TEXT,
+        dayKey TEXT,
+        PRIMARY KEY (userId, dayKey)
+      );
+    `).run();
+
+    console.log('[D1 Auto-Init] Tables created. Seeding default data...');
+
+    // Seed default tasks
+    const defaultTasks = [
+      {
+        id: "mandatory_channel_1",
+        title: "TM_Digital",
+        description: "Join the official TM_Digital Telegram channel.",
+        type: "TelegramChannel",
+        rewardTM: 200,
+        link: "https://t.me/TM_Digital",
+        isMandatory: 1,
+        displayOrder: 1,
+        isEnabled: 1,
+        requiresVerification: 1,
+        channelId: "-1003260376953"
+      },
+      {
+        id: "mandatory_channel_2",
+        title: "TM_Back",
+        description: "Join the official TM_Back Telegram channel.",
+        type: "TelegramChannel",
+        rewardTM: 150,
+        link: "https://t.me/TM_Back",
+        isMandatory: 1,
+        displayOrder: 2,
+        isEnabled: 1,
+        requiresVerification: 1,
+        channelId: "-1001179648853"
+      },
+      {
+        id: "mandatory_channel_3",
+        title: "TM_With",
+        description: "Join the official TM_With Telegram channel.",
+        type: "TelegramChannel",
+        rewardTM: 150,
+        link: "https://t.me/TM_With",
+        isMandatory: 1,
+        displayOrder: 3,
+        isEnabled: 1,
+        requiresVerification: 1,
+        channelId: "-1001873895959"
+      },
+      {
+        id: "task_optional_1",
+        title: "Follow TM Digital on X",
+        description: "Follow @TM_Digital on X (Twitter) for instant updates.",
+        type: "ExternalLink",
+        rewardTM: 100,
+        link: "https://x.com",
+        isMandatory: 0,
+        displayOrder: 4,
+        isEnabled: 1,
+        requiresVerification: 1,
+        channelId: ""
+      }
+    ];
+
+    for (const t of defaultTasks) {
+      await db.prepare(`
+        INSERT OR IGNORE INTO tasks (id, title, description, type, rewardTM, link, isMandatory, displayOrder, isEnabled, requiresVerification, channelId)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).bind(t.id, t.title, t.description, t.type, t.rewardTM, t.link, t.isMandatory, t.displayOrder, t.isEnabled, t.requiresVerification, t.channelId).run();
     }
 
-    if (!parsed.users || !Array.isArray(parsed.users) || parsed.users.length === 0) {
-      parsed.users = [...DEFAULT_USERS];
+    // Seed default settings
+    const defaultSettings: Record<string, string> = {
+      conversionRate: "1000",
+      referralRewardUSDT: "0.05",
+      referralRewardTM: "100",
+      dailyBonusRateUSDT: "0.11",
+      dailyBonusIntervalHours: "24",
+      dailyBonusEnabled: "true",
+      walletAddressUSDT: "0x2FD17882dB69E7eA50E463dBaD37dCD3C2C0d592",
+      qrCodeUrl: "https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=0x2FD17882dB69E7eA50E463dBaD37dCD3C2C0d592",
+      autoApprovalEnabled: "false",
+      maintenanceMode: "false",
+      announcement: "📢 TM Digital v1.2 Live! Complete your mandatory tasks to unlock your premium staking dashboard.",
+      mandatoryTaskCount: "3",
+      depositMinUSDT: "1.0",
+      withdrawEnabled: "true",
+      withdrawDisabledMessage: "🚫 Withdrawals are temporarily unavailable. Please try again later.",
+      referralSystemEnabled: "true",
+      referralRewardAmountUSD: "3.0",
+      referralMinWithdrawRequirementUSD: "10.0"
+    };
+
+    for (const [k, v] of Object.entries(defaultSettings)) {
+      await db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').bind(k, v).run();
     }
-    if (!parsed.tasks || parsed.tasks.length === 0) {
-      parsed.tasks = DEFAULT_TASKS;
-    } else {
-      // Enforce the 3 mandatory channels are always present and properly configured
-      const mandatoryIds = ["mandatory_channel_1", "mandatory_channel_2", "mandatory_channel_3"];
-      const mandatoryDefs = DEFAULT_TASKS.filter(t => mandatoryIds.includes(t.id));
-      
-      mandatoryDefs.forEach(def => {
-        const idx = parsed.tasks.findIndex((t: any) => t.id === def.id);
-        if (idx === -1) {
-          parsed.tasks.push(def);
-        } else {
-          parsed.tasks[idx] = {
-            ...parsed.tasks[idx],
-            title: def.title,
-            description: def.description,
-            type: def.type,
-            rewardTM: def.rewardTM,
-            link: def.link,
-            isMandatory: true,
-            isEnabled: true,
-            requiresVerification: true,
-            channelId: def.channelId
-          };
+
+    // Seed default users
+    const defaultUsers = [
+      {
+        uid: 117301,
+        id: "111111111",
+        username: "cryptoking",
+        firstName: "Sarah",
+        lastName: "Connor",
+        photoUrl: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&h=100&fit=crop&crop=faces",
+        languageCode: "en",
+        registeredAt: "2026-06-01T12:00:00Z",
+        balanceTM: 3500,
+        balanceUSDT: 1.5,
+        lifetimeEarningsUSDT: 3.5,
+        referralEarningsUSDT: 1.2,
+        todayBonusUSDT: 0.15,
+        depositStatus: 'Approved',
+        withdrawStatus: 'Approved',
+        referralCount: 8,
+        isFrozen: 0,
+        isBanned: 0,
+        mandatoryCompleted: 1,
+        referredBy: null
+      },
+      {
+        uid: 117302,
+        id: "222222222",
+        username: "tg_rich",
+        firstName: "Michael",
+        lastName: "Scott",
+        photoUrl: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=100&h=100&fit=crop&crop=faces",
+        languageCode: "en",
+        registeredAt: "2026-07-10T15:30:00Z",
+        balanceTM: 500,
+        balanceUSDT: 0.0,
+        lifetimeEarningsUSDT: 0.0,
+        referralEarningsUSDT: 0.0,
+        todayBonusUSDT: 0.0,
+        depositStatus: 'Pending',
+        withdrawStatus: 'None',
+        referralCount: 0,
+        isFrozen: 0,
+        isBanned: 0,
+        mandatoryCompleted: 0,
+        referredBy: null
+      },
+      {
+        uid: 117303,
+        id: "333333333",
+        username: "new_joiner",
+        firstName: "Dwight",
+        lastName: "Schrute",
+        photoUrl: "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=100&h=100&fit=crop&crop=faces",
+        languageCode: "de",
+        registeredAt: "2026-07-05T09:15:00Z",
+        balanceTM: 1500,
+        balanceUSDT: 0.5,
+        lifetimeEarningsUSDT: 0.5,
+        referralEarningsUSDT: 0.0,
+        todayBonusUSDT: 0.05,
+        depositStatus: 'Approved',
+        withdrawStatus: 'Pending',
+        referralCount: 2,
+        isFrozen: 0,
+        isBanned: 0,
+        mandatoryCompleted: 1,
+        referredBy: null
+      },
+      {
+        uid: 117307,
+        id: "117307",
+        username: "user_117307",
+        firstName: "VIP User",
+        lastName: "",
+        photoUrl: "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=120&h=120&fit=crop&crop=faces",
+        languageCode: "en",
+        registeredAt: "2026-07-15T00:00:00Z",
+        balanceTM: 50000,
+        balanceUSDT: 500.0,
+        lifetimeEarningsUSDT: 500.0,
+        referralEarningsUSDT: 0.0,
+        todayBonusUSDT: 0.0,
+        depositStatus: 'None',
+        withdrawStatus: 'None',
+        referralCount: 0,
+        isFrozen: 0,
+        isBanned: 0,
+        mandatoryCompleted: 1,
+        referredBy: null
+      }
+    ];
+
+    for (const u of defaultUsers) {
+      await db.prepare(`
+        INSERT OR IGNORE INTO users (id, uid, username, firstName, lastName, photoUrl, languageCode, registeredAt, balanceTM, balanceUSDT, lifetimeEarningsUSDT, referralEarningsUSDT, todayBonusUSDT, depositStatus, withdrawStatus, referralCount, isFrozen, isBanned, mandatoryCompleted, referredBy)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).bind(
+        u.id, u.uid, u.username, u.firstName, u.lastName, u.photoUrl, u.languageCode, u.registeredAt,
+        u.balanceTM, u.balanceUSDT, u.lifetimeEarningsUSDT, u.referralEarningsUSDT, u.todayBonusUSDT,
+        u.depositStatus, u.withdrawStatus, u.referralCount, u.isFrozen, u.isBanned, u.mandatoryCompleted, u.referredBy
+      ).run();
+    }
+
+    const defaultCompleted = [
+      { userId: "111111111", taskId: "mandatory_channel_1" },
+      { userId: "111111111", taskId: "mandatory_channel_2" },
+      { userId: "111111111", taskId: "mandatory_channel_3" },
+      { userId: "333333333", taskId: "mandatory_channel_1" },
+      { userId: "333333333", taskId: "mandatory_channel_2" },
+      { userId: "333333333", taskId: "mandatory_channel_3" },
+      { userId: "222222222", taskId: "mandatory_channel_1" }
+    ];
+
+    for (const c of defaultCompleted) {
+      await db.prepare('INSERT OR IGNORE INTO completed_tasks (userId, taskId) VALUES (?, ?)').bind(c.userId, c.taskId).run();
+    }
+
+    console.log('[D1 Auto-Init] Seeding completed.');
+  }
+
+  // Run migrations for gift_codes table if columns are missing in existing D1 database
+  try {
+    await db.prepare(`ALTER TABLE gift_codes ADD COLUMN rewardAmount REAL DEFAULT 0;`).run();
+  } catch (e) {}
+  try {
+    await db.prepare(`ALTER TABLE gift_codes ADD COLUMN claimsCount INTEGER DEFAULT 0;`).run();
+  } catch (e) {}
+  try {
+    await db.prepare(`ALTER TABLE gift_codes ADD COLUMN expiryDate TEXT;`).run();
+  } catch (e) {}
+  try {
+    await db.prepare(`ALTER TABLE gift_codes ADD COLUMN isEnabled INTEGER DEFAULT 1;`).run();
+  } catch (e) {}
+  try {
+    await db.prepare(`ALTER TABLE gift_codes ADD COLUMN claimedBy TEXT DEFAULT '[]';`).run();
+  } catch (e) {}
+}
+
+// Get from Cloudflare D1
+async function getDBFromD1(db: any): Promise<any> {
+  try {
+    // 1. Settings
+    const settingsResult = await db.prepare('SELECT key, value FROM settings').all();
+    const settingsRows = settingsResult.results || [];
+    const settings: any = {};
+    settingsRows.forEach((row: any) => {
+      if (row.value === 'true') settings[row.key] = true;
+      else if (row.value === 'false') settings[row.key] = false;
+      else if (!isNaN(Number(row.value)) && row.value !== '') settings[row.key] = Number(row.value);
+      else settings[row.key] = row.value;
+    });
+
+    // 2. Users
+    const usersResult = await db.prepare('SELECT * FROM users').all();
+    const usersRows = usersResult.results || [];
+    const users = usersRows.map((u: any) => ({
+      ...u,
+      isFrozen: u.isFrozen === 1,
+      isBanned: u.isBanned === 1,
+      mandatoryCompleted: u.mandatoryCompleted === 1
+    }));
+
+    // 3. Tasks
+    const tasksResult = await db.prepare('SELECT * FROM tasks ORDER BY displayOrder ASC').all();
+    const tasksRows = tasksResult.results || [];
+    const tasks = tasksRows.map((t: any) => ({
+      ...t,
+      isMandatory: t.isMandatory === 1,
+      isEnabled: t.isEnabled === 1,
+      requiresVerification: t.requiresVerification === 1
+    }));
+
+    // 4. Completed Tasks
+    const completedResult = await db.prepare('SELECT * FROM completed_tasks').all();
+    const completedRows = completedResult.results || [];
+    const completedTasks: Record<string, string[]> = {};
+    completedRows.forEach((row: any) => {
+      if (!completedTasks[row.userId]) {
+        completedTasks[row.userId] = [];
+      }
+      completedTasks[row.userId].push(row.taskId);
+    });
+
+    // 5. Deposits, Withdrawals, Transactions, Transfers, Gift Codes, Tickets
+    const depositsResult = await db.prepare('SELECT * FROM deposits ORDER BY createdAt DESC').all();
+    const withdrawalsResult = await db.prepare('SELECT * FROM withdrawals ORDER BY createdAt DESC').all();
+    const transactionsResult = await db.prepare('SELECT * FROM transactions ORDER BY createdAt DESC').all();
+    const transfersResult = await db.prepare('SELECT * FROM transfers ORDER BY timestamp DESC').all();
+    const giftCodesResult = await db.prepare('SELECT * FROM gift_codes').all();
+    const ticketsResult = await db.prepare('SELECT * FROM tickets ORDER BY createdAt DESC').all();
+
+    const deposits = depositsResult.results || [];
+    const withdrawals = withdrawalsResult.results || [];
+    const transactions = transactionsResult.results || [];
+    const transfers = transfersResult.results || [];
+    const giftCodesRaw = giftCodesResult.results || [];
+    const giftCodes = giftCodesRaw.map((g: any) => {
+      let claimedByArr: string[] = [];
+      try {
+        if (g.claimedBy) {
+          claimedByArr = JSON.parse(g.claimedBy);
         }
-      });
-    }
-    return parsed;
-  } catch (e) {
-    console.error("Failed to parse db file", e);
+      } catch (e) {
+        if (typeof g.claimedBy === 'string' && g.claimedBy.trim() !== '') {
+          claimedByArr = g.claimedBy.split(',').map((s: string) => s.trim()).filter(Boolean);
+        }
+      }
+      return {
+        code: g.code,
+        rewardAmount: g.rewardAmount !== undefined && g.rewardAmount !== null ? Number(g.rewardAmount) : Number(g.rewardUSDT || 0),
+        rewardTM: Number(g.rewardTM || 0),
+        rewardUSDT: Number(g.rewardUSDT || 0),
+        maxClaims: Number(g.maxClaims || 1),
+        claimsCount: g.claimsCount !== undefined && g.claimsCount !== null ? Number(g.claimsCount) : Number(g.claimedCount || 0),
+        claimedCount: g.claimedCount !== undefined && g.claimedCount !== null ? Number(g.claimedCount) : Number(g.claimsCount || 0),
+        expiryDate: g.expiryDate || g.expiresAt || undefined,
+        expiresAt: g.expiresAt || g.expiryDate || undefined,
+        isEnabled: g.isEnabled === undefined || g.isEnabled === null ? true : (g.isEnabled === 1 || g.isEnabled === true || String(g.isEnabled) === 'true'),
+        claimedBy: claimedByArr,
+        createdAt: g.createdAt
+      };
+    });
+    const tickets = ticketsResult.results || [];
+
+    // 6. Claimed Bonuses
+    const bonusesResult = await db.prepare('SELECT * FROM claimed_bonuses').all();
+    const bonusesRows = bonusesResult.results || [];
+    const claimedBonuses: Record<string, string[]> = {};
+    bonusesRows.forEach((row: any) => {
+      if (!claimedBonuses[row.userId]) {
+        claimedBonuses[row.userId] = [];
+      }
+      claimedBonuses[row.userId].push(row.dayKey);
+    });
+
+    return {
+      users,
+      tasks,
+      channels: [],
+      deposits,
+      withdrawals,
+      withdrawalRules: [],
+      transactions,
+      transfers,
+      tickets,
+      settings: { ...DEFAULT_SETTINGS, ...settings },
+      completedTasks,
+      claimedBonuses,
+      taskSubmissions: [],
+      notifications: [],
+      giftCodes
+    };
+  } catch (err) {
+    console.error("Failed to read from D1 cloud database", err);
     return null;
   }
 }
 
-// Save DB helper
-function saveDB(db: any) {
+// Save to Cloudflare D1
+async function saveDBToD1(dbState: any, db: any): Promise<void> {
   try {
-    fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2), 'utf8');
-  } catch (e) {
-    console.error("Failed to write db file", e);
+    // 1. Settings
+    if (dbState.settings) {
+      await db.prepare('DELETE FROM settings').run();
+      const insertPromises = [];
+      for (const [k, v] of Object.entries(dbState.settings)) {
+        insertPromises.push(db.prepare('INSERT INTO settings (key, value) VALUES (?, ?)').bind(k, String(v)).run());
+      }
+      await Promise.all(insertPromises);
+    }
+
+    // 2. Users
+    if (dbState.users && Array.isArray(dbState.users)) {
+      await db.prepare('DELETE FROM users').run();
+      const insertPromises = [];
+      for (const u of dbState.users) {
+        insertPromises.push(
+          db.prepare(`
+            INSERT INTO users (id, uid, username, firstName, lastName, photoUrl, languageCode, registeredAt, balanceTM, balanceUSDT, lifetimeEarningsUSDT, referralEarningsUSDT, todayBonusUSDT, depositStatus, withdrawStatus, referralCount, isFrozen, isBanned, mandatoryCompleted, referredBy)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `).bind(
+            u.id, u.uid, u.username, u.firstName, u.lastName, u.photoUrl, u.languageCode, u.registeredAt,
+            u.balanceTM || 0, u.balanceUSDT || 0, u.lifetimeEarningsUSDT || 0, u.referralEarningsUSDT || 0, u.todayBonusUSDT || 0,
+            u.depositStatus || 'None', u.withdrawStatus || 'None', u.referralCount || 0,
+            u.isFrozen ? 1 : 0, u.isBanned ? 1 : 0, u.mandatoryCompleted ? 1 : 0, u.referredBy || null
+          ).run()
+        );
+      }
+      await Promise.all(insertPromises);
+    }
+
+    // 3. Tasks
+    if (dbState.tasks && Array.isArray(dbState.tasks)) {
+      await db.prepare('DELETE FROM tasks').run();
+      const insertPromises = [];
+      for (const t of dbState.tasks) {
+        insertPromises.push(
+          db.prepare(`
+            INSERT INTO tasks (id, title, description, type, rewardTM, link, isMandatory, displayOrder, isEnabled, requiresVerification, channelId)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `).bind(
+            t.id, t.title, t.description, t.type, t.rewardTM || 0, t.link || '',
+            t.isMandatory ? 1 : 0, t.displayOrder || 0, t.isEnabled ? 1 : 0, t.requiresVerification ? 1 : 0, t.channelId || ''
+          ).run()
+        );
+      }
+      await Promise.all(insertPromises);
+    }
+
+    // 4. Completed Tasks
+    if (dbState.completedTasks) {
+      await db.prepare('DELETE FROM completed_tasks').run();
+      const insertPromises = [];
+      for (const [userId, taskIds] of Object.entries(dbState.completedTasks)) {
+        if (Array.isArray(taskIds)) {
+          for (const taskId of taskIds) {
+            insertPromises.push(db.prepare('INSERT INTO completed_tasks (userId, taskId) VALUES (?, ?)').bind(userId, taskId).run());
+          }
+        }
+      }
+      await Promise.all(insertPromises);
+    }
+
+    // 5. Deposits
+    if (dbState.deposits && Array.isArray(dbState.deposits)) {
+      await db.prepare('DELETE FROM deposits').run();
+      const insertPromises = [];
+      for (const d of dbState.deposits) {
+        insertPromises.push(db.prepare('INSERT INTO deposits (id, userId, amountUSDT, txHash, status, createdAt) VALUES (?, ?, ?, ?, ?, ?)').bind(d.id, d.userId, d.amountUSDT || 0, d.txHash || '', d.status || 'Pending', d.createdAt).run());
+      }
+      await Promise.all(insertPromises);
+    }
+
+    // 6. Withdrawals
+    if (dbState.withdrawals && Array.isArray(dbState.withdrawals)) {
+      await db.prepare('DELETE FROM withdrawals').run();
+      const insertPromises = [];
+      for (const w of dbState.withdrawals) {
+        insertPromises.push(db.prepare('INSERT INTO withdrawals (id, userId, amountUSDT, amountTM, address, network, status, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').bind(w.id, w.userId, w.amountUSDT || 0, w.amountTM || 0, w.address || '', w.network || '', w.status || 'Pending', w.createdAt).run());
+      }
+      await Promise.all(insertPromises);
+    }
+
+    // 7. Transactions
+    if (dbState.transactions && Array.isArray(dbState.transactions)) {
+      await db.prepare('DELETE FROM transactions').run();
+      const insertPromises = [];
+      for (const t of dbState.transactions) {
+        insertPromises.push(db.prepare('INSERT INTO transactions (id, userId, type, amountTM, amountUSDT, description, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?)').bind(t.id, t.userId, t.type, t.amountTM || 0, t.amountUSDT || 0, t.description || '', t.createdAt).run());
+      }
+      await Promise.all(insertPromises);
+    }
+
+    // 8. Transfers
+    if (dbState.transfers && Array.isArray(dbState.transfers)) {
+      await db.prepare('DELETE FROM transfers').run();
+      const insertPromises = [];
+      for (const t of dbState.transfers) {
+        insertPromises.push(db.prepare('INSERT INTO transfers (id, senderUid, receiverUid, amountTM, status, timestamp) VALUES (?, ?, ?, ?, ?, ?)').bind(t.id, t.senderUid, t.receiverUid, t.amountTM || 0, t.status || 'Pending', t.timestamp).run());
+      }
+      await Promise.all(insertPromises);
+    }
+
+    // 9. Gift Codes
+    if (dbState.giftCodes && Array.isArray(dbState.giftCodes)) {
+      await db.prepare('DELETE FROM gift_codes').run();
+      const insertPromises = [];
+      for (const g of dbState.giftCodes) {
+        const rewardAmount = g.rewardAmount !== undefined ? g.rewardAmount : (g.rewardUSDT || 0);
+        const claimsCount = g.claimsCount !== undefined ? g.claimsCount : (g.claimedCount || 0);
+        const expiryDate = g.expiryDate || g.expiresAt || null;
+        const isEnabled = g.isEnabled === false ? 0 : 1;
+        const claimedByStr = JSON.stringify(g.claimedBy || []);
+
+        insertPromises.push(
+          db.prepare(`
+            INSERT INTO gift_codes (code, rewardAmount, rewardTM, rewardUSDT, maxClaims, claimsCount, claimedCount, createdAt, expiryDate, expiresAt, isEnabled, claimedBy)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `).bind(
+            g.code,
+            rewardAmount,
+            g.rewardTM || 0,
+            g.rewardUSDT || 0,
+            g.maxClaims || 1,
+            claimsCount,
+            claimsCount,
+            g.createdAt || new Date().toISOString(),
+            expiryDate,
+            expiryDate,
+            isEnabled,
+            claimedByStr
+          ).run()
+        );
+      }
+      await Promise.all(insertPromises);
+    }
+
+    // 10. Tickets
+    if (dbState.tickets && Array.isArray(dbState.tickets)) {
+      await db.prepare('DELETE FROM tickets').run();
+      const insertPromises = [];
+      for (const t of dbState.tickets) {
+        insertPromises.push(db.prepare('INSERT INTO tickets (id, userId, subject, message, status, createdAt) VALUES (?, ?, ?, ?, ?, ?)').bind(t.id, t.userId, t.subject || '', t.message || '', t.status || 'Open', t.createdAt).run());
+      }
+      await Promise.all(insertPromises);
+    }
+
+    // 11. Claimed Bonuses
+    if (dbState.claimedBonuses) {
+      await db.prepare('DELETE FROM claimed_bonuses').run();
+      const insertPromises = [];
+      for (const [userId, dayKeys] of Object.entries(dbState.claimedBonuses)) {
+        if (Array.isArray(dayKeys)) {
+          for (const dayKey of dayKeys) {
+            insertPromises.push(db.prepare('INSERT INTO claimed_bonuses (userId, dayKey) VALUES (?, ?)').bind(userId, dayKey).run());
+          }
+        }
+      }
+      await Promise.all(insertPromises);
+    }
+  } catch (err) {
+    console.error("Failed to save to D1 cloud database", err);
   }
+}
+
+// Get from Local SQLite
+function getDBFromLocal(): any {
+  initDatabase();
+  try {
+    // 1. Settings
+    const settingsRows = sqliteDb.prepare('SELECT key, value FROM settings').all() as any[];
+    const settings: any = {};
+    settingsRows.forEach((row: any) => {
+      if (row.value === 'true') settings[row.key] = true;
+      else if (row.value === 'false') settings[row.key] = false;
+      else if (!isNaN(Number(row.value)) && row.value !== '') settings[row.key] = Number(row.value);
+      else settings[row.key] = row.value;
+    });
+
+    // 2. Users
+    const usersRows = sqliteDb.prepare('SELECT * FROM users').all() as any[];
+    const users = usersRows.map((u: any) => ({
+      ...u,
+      isFrozen: u.isFrozen === 1,
+      isBanned: u.isBanned === 1,
+      mandatoryCompleted: u.mandatoryCompleted === 1
+    }));
+
+    // 3. Tasks
+    const tasksRows = sqliteDb.prepare('SELECT * FROM tasks ORDER BY displayOrder ASC').all() as any[];
+    const tasks = tasksRows.map((t: any) => ({
+      ...t,
+      isMandatory: t.isMandatory === 1,
+      isEnabled: t.isEnabled === 1,
+      requiresVerification: t.requiresVerification === 1
+    }));
+
+    // 4. Completed Tasks
+    const completedRows = sqliteDb.prepare('SELECT * FROM completed_tasks').all() as any[];
+    const completedTasks: Record<string, string[]> = {};
+    completedRows.forEach((row: any) => {
+      if (!completedTasks[row.userId]) {
+        completedTasks[row.userId] = [];
+      }
+      completedTasks[row.userId].push(row.taskId);
+    });
+
+    // 5. Deposits, Withdrawals, Transactions, Transfers, Gift Codes, Tickets
+    const deposits = sqliteDb.prepare('SELECT * FROM deposits ORDER BY createdAt DESC').all() as any[];
+    const withdrawals = sqliteDb.prepare('SELECT * FROM withdrawals ORDER BY createdAt DESC').all() as any[];
+    const transactions = sqliteDb.prepare('SELECT * FROM transactions ORDER BY createdAt DESC').all() as any[];
+    const transfers = sqliteDb.prepare('SELECT * FROM transfers ORDER BY timestamp DESC').all() as any[];
+    const giftCodesRaw = sqliteDb.prepare('SELECT * FROM gift_codes').all() as any[];
+    const giftCodes = giftCodesRaw.map((g: any) => {
+      let claimedByArr: string[] = [];
+      try {
+        if (g.claimedBy) {
+          claimedByArr = JSON.parse(g.claimedBy);
+        }
+      } catch (e) {
+        if (typeof g.claimedBy === 'string' && g.claimedBy.trim() !== '') {
+          claimedByArr = g.claimedBy.split(',').map((s: string) => s.trim()).filter(Boolean);
+        }
+      }
+      return {
+        code: g.code,
+        rewardAmount: g.rewardAmount !== undefined && g.rewardAmount !== null ? Number(g.rewardAmount) : Number(g.rewardUSDT || 0),
+        rewardTM: Number(g.rewardTM || 0),
+        rewardUSDT: Number(g.rewardUSDT || 0),
+        maxClaims: Number(g.maxClaims || 1),
+        claimsCount: g.claimsCount !== undefined && g.claimsCount !== null ? Number(g.claimsCount) : Number(g.claimedCount || 0),
+        claimedCount: g.claimedCount !== undefined && g.claimedCount !== null ? Number(g.claimedCount) : Number(g.claimsCount || 0),
+        expiryDate: g.expiryDate || g.expiresAt || undefined,
+        expiresAt: g.expiresAt || g.expiryDate || undefined,
+        isEnabled: g.isEnabled === undefined || g.isEnabled === null ? true : (g.isEnabled === 1 || g.isEnabled === true || String(g.isEnabled) === 'true'),
+        claimedBy: claimedByArr,
+        createdAt: g.createdAt
+      };
+    });
+    const tickets = sqliteDb.prepare('SELECT * FROM tickets ORDER BY createdAt DESC').all() as any[];
+
+    // 6. Claimed Bonuses
+    const bonusesRows = sqliteDb.prepare('SELECT * FROM claimed_bonuses').all() as any[];
+    const claimedBonuses: Record<string, string[]> = {};
+    bonusesRows.forEach((row: any) => {
+      if (!claimedBonuses[row.userId]) {
+        claimedBonuses[row.userId] = [];
+      }
+      claimedBonuses[row.userId].push(row.dayKey);
+    });
+
+    return {
+      users,
+      tasks,
+      channels: [],
+      deposits,
+      withdrawals,
+      withdrawalRules: [],
+      transactions,
+      transfers,
+      tickets,
+      settings: { ...DEFAULT_SETTINGS, ...settings },
+      completedTasks,
+      claimedBonuses,
+      taskSubmissions: [],
+      notifications: [],
+      giftCodes
+    };
+  } catch (err) {
+    console.error("Failed to read from local database", err);
+    return null;
+  }
+}
+
+// Save to Local SQLite
+function saveDBToLocal(dbState: any) {
+  try {
+    // 1. Settings
+    if (dbState.settings) {
+      sqliteDb.prepare('DELETE FROM settings').run();
+      const stmt = sqliteDb.prepare('INSERT INTO settings (key, value) VALUES (?, ?)');
+      for (const [k, v] of Object.entries(dbState.settings)) {
+        stmt.run(k, String(v));
+      }
+    }
+
+    // 2. Users
+    if (dbState.users && Array.isArray(dbState.users)) {
+      sqliteDb.prepare('DELETE FROM users').run();
+      const stmt = sqliteDb.prepare(`
+        INSERT INTO users (id, uid, username, firstName, lastName, photoUrl, languageCode, registeredAt, balanceTM, balanceUSDT, lifetimeEarningsUSDT, referralEarningsUSDT, todayBonusUSDT, depositStatus, withdrawStatus, referralCount, isFrozen, isBanned, mandatoryCompleted, referredBy)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+      for (const u of dbState.users) {
+        stmt.run(
+          u.id, u.uid, u.username, u.firstName, u.lastName, u.photoUrl, u.languageCode, u.registeredAt,
+          u.balanceTM || 0, u.balanceUSDT || 0, u.lifetimeEarningsUSDT || 0, u.referralEarningsUSDT || 0, u.todayBonusUSDT || 0,
+          u.depositStatus || 'None', u.withdrawStatus || 'None', u.referralCount || 0,
+          u.isFrozen ? 1 : 0, u.isBanned ? 1 : 0, u.mandatoryCompleted ? 1 : 0, u.referredBy || null
+        );
+      }
+    }
+
+    // 3. Tasks
+    if (dbState.tasks && Array.isArray(dbState.tasks)) {
+      sqliteDb.prepare('DELETE FROM tasks').run();
+      const stmt = sqliteDb.prepare(`
+        INSERT INTO tasks (id, title, description, type, rewardTM, link, isMandatory, displayOrder, isEnabled, requiresVerification, channelId)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+      for (const t of dbState.tasks) {
+        stmt.run(
+          t.id, t.title, t.description, t.type, t.rewardTM || 0, t.link || '',
+          t.isMandatory ? 1 : 0, t.displayOrder || 0, t.isEnabled ? 1 : 0, t.requiresVerification ? 1 : 0, t.channelId || ''
+        );
+      }
+    }
+
+    // 4. Completed Tasks
+    if (dbState.completedTasks) {
+      sqliteDb.prepare('DELETE FROM completed_tasks').run();
+      const stmt = sqliteDb.prepare('INSERT INTO completed_tasks (userId, taskId) VALUES (?, ?)');
+      for (const [userId, taskIds] of Object.entries(dbState.completedTasks)) {
+        if (Array.isArray(taskIds)) {
+          for (const taskId of taskIds) {
+            stmt.run(userId, taskId);
+          }
+        }
+      }
+    }
+
+    // 5. Deposits
+    if (dbState.deposits && Array.isArray(dbState.deposits)) {
+      sqliteDb.prepare('DELETE FROM deposits').run();
+      const stmt = sqliteDb.prepare('INSERT INTO deposits (id, userId, amountUSDT, txHash, status, createdAt) VALUES (?, ?, ?, ?, ?, ?)');
+      for (const d of dbState.deposits) {
+        stmt.run(d.id, d.userId, d.amountUSDT || 0, d.txHash || '', d.status || 'Pending', d.createdAt);
+      }
+    }
+
+    // 6. Withdrawals
+    if (dbState.withdrawals && Array.isArray(dbState.withdrawals)) {
+      sqliteDb.prepare('DELETE FROM withdrawals').run();
+      const stmt = sqliteDb.prepare('INSERT INTO withdrawals (id, userId, amountUSDT, amountTM, address, network, status, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
+      for (const w of dbState.withdrawals) {
+        stmt.run(w.id, w.userId, w.amountUSDT || 0, w.amountTM || 0, w.address || '', w.network || '', w.status || 'Pending', w.createdAt);
+      }
+    }
+
+    // 7. Transactions
+    if (dbState.transactions && Array.isArray(dbState.transactions)) {
+      sqliteDb.prepare('DELETE FROM transactions').run();
+      const stmt = sqliteDb.prepare('INSERT INTO transactions (id, userId, type, amountTM, amountUSDT, description, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?)');
+      for (const t of dbState.transactions) {
+        stmt.run(t.id, t.userId, t.type, t.amountTM || 0, t.amountUSDT || 0, t.description || '', t.createdAt);
+      }
+    }
+
+    // 8. Transfers
+    if (dbState.transfers && Array.isArray(dbState.transfers)) {
+      sqliteDb.prepare('DELETE FROM transfers').run();
+      const stmt = sqliteDb.prepare('INSERT INTO transfers (id, senderUid, receiverUid, amountTM, status, timestamp) VALUES (?, ?, ?, ?, ?, ?)');
+      for (const t of dbState.transfers) {
+        stmt.run(t.id, t.senderUid, t.receiverUid, t.amountTM || 0, t.status || 'Pending', t.timestamp);
+      }
+    }
+
+    // 9. Gift Codes
+    if (dbState.giftCodes && Array.isArray(dbState.giftCodes)) {
+      sqliteDb.prepare('DELETE FROM gift_codes').run();
+      const stmt = sqliteDb.prepare(`
+        INSERT INTO gift_codes (code, rewardAmount, rewardTM, rewardUSDT, maxClaims, claimsCount, claimedCount, createdAt, expiryDate, expiresAt, isEnabled, claimedBy)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+      for (const g of dbState.giftCodes) {
+        const rewardAmount = g.rewardAmount !== undefined ? g.rewardAmount : (g.rewardUSDT || 0);
+        const claimsCount = g.claimsCount !== undefined ? g.claimsCount : (g.claimedCount || 0);
+        const expiryDate = g.expiryDate || g.expiresAt || null;
+        const isEnabled = g.isEnabled === false ? 0 : 1;
+        const claimedByStr = JSON.stringify(g.claimedBy || []);
+
+        stmt.run(
+          g.code,
+          rewardAmount,
+          g.rewardTM || 0,
+          g.rewardUSDT || 0,
+          g.maxClaims || 1,
+          claimsCount,
+          claimsCount,
+          g.createdAt || new Date().toISOString(),
+          expiryDate,
+          expiryDate,
+          isEnabled,
+          claimedByStr
+        );
+      }
+    }
+
+    // 10. Tickets
+    if (dbState.tickets && Array.isArray(dbState.tickets)) {
+      sqliteDb.prepare('DELETE FROM tickets').run();
+      const stmt = sqliteDb.prepare('INSERT INTO tickets (id, userId, subject, message, status, createdAt) VALUES (?, ?, ?, ?, ?, ?)');
+      for (const t of dbState.tickets) {
+        stmt.run(t.id, t.userId, t.subject || '', t.message || '', t.status || 'Open', t.createdAt);
+      }
+    }
+
+    // 11. Claimed Bonuses
+    if (dbState.claimedBonuses) {
+      sqliteDb.prepare('DELETE FROM claimed_bonuses').run();
+      const stmt = sqliteDb.prepare('INSERT INTO claimed_bonuses (userId, dayKey) VALUES (?, ?)');
+      for (const [userId, dayKeys] of Object.entries(dbState.claimedBonuses)) {
+        if (Array.isArray(dayKeys)) {
+          for (const dayKey of dayKeys) {
+            stmt.run(userId, dayKey);
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.error("Failed to save to local SQLite database", err);
+  }
+}
+
+// Get DB helper
+async function getDB(req?: any): Promise<any> {
+  const d1 = getActiveD1(req);
+  if (d1) {
+    await initD1Database(d1);
+    return await getDBFromD1(d1);
+  }
+  return getDBFromLocal();
+}
+
+// Save DB helper
+async function saveDB(dbState: any, req?: any): Promise<void> {
+  const d1 = getActiveD1(req);
+  if (d1) {
+    await saveDBToD1(dbState, d1);
+    return;
+  }
+  saveDBToLocal(dbState);
 }
 
 async function startServer() {
@@ -334,9 +1365,8 @@ async function startServer() {
   // -------------------------------------------------------------
 
   // Get current DB, optionally register user
-  // Get current DB, optionally register user
-  app.get('/api/db', (req, res) => {
-    const db = getDB();
+  app.get('/api/db', async (req, res) => {
+    const db = await getDB(req);
     if (!db) {
       return res.status(500).json({ error: 'Database error' });
     }
@@ -375,7 +1405,7 @@ async function startServer() {
           mandatoryCompleted: true
         };
         db.users.push(user);
-        saveDB(db);
+        await saveDB(db, req);
       }
 
       // Check for referral param if passed in query (support all standard Telegram query param variations)
@@ -523,7 +1553,7 @@ async function startServer() {
         }
       }
 
-      saveDB(db);
+      await saveDB(db, req);
 
       if (claimedTransfers.length > 0) {
         db.claimedTransfers = claimedTransfers;
@@ -536,7 +1566,7 @@ async function startServer() {
   });
 
   // Save the client-updated DB (for non-critical changes like tickets or settings edits)
-  app.post('/api/db/save', (req, res) => {
+  app.post('/api/db/save', async (req, res) => {
     try {
       const updatedDb = req.body;
       if (!updatedDb || !updatedDb.users) {
@@ -544,7 +1574,7 @@ async function startServer() {
       }
       
       // Server-side safety: we load the current DB first to make sure we don't overwrite completed tasks and balances trivially!
-      const currentDb = getDB();
+      const currentDb = await getDB(req);
       if (currentDb) {
         // Overwrite general editable configs
         currentDb.tickets = updatedDb.tickets || currentDb.tickets;
@@ -581,10 +1611,10 @@ async function startServer() {
         }
         currentDb.completedTasks = updatedDb.completedTasks || currentDb.completedTasks;
         
-        saveDB(currentDb);
+        await saveDB(currentDb, req);
         res.json({ success: true, db: currentDb });
       } else {
-        saveDB(updatedDb);
+        await saveDB(updatedDb, req);
         res.json({ success: true, db: updatedDb });
       }
     } catch (err: any) {
@@ -735,7 +1765,7 @@ async function startServer() {
         return res.status(200).json({ success: true, message: "Verification endpoint is online and active." });
       }
 
-      const db = getDB();
+      const db = await getDB(req);
       if (!db) {
         return res.status(500).json({ success: false, message: "❌ Database error on the server" });
       }
@@ -782,7 +1812,7 @@ async function startServer() {
           read: false
         });
 
-        saveDB(db);
+        await saveDB(db, req);
       }
 
       res.status(200).json({
@@ -801,13 +1831,13 @@ async function startServer() {
   app.post('/api/verify-channel', verificationHandler);
 
   // Secure Onboarding Completion
-  app.post('/api/onboarding/complete', (req, res) => {
+  app.post('/api/onboarding/complete', async (req, res) => {
     const { userId } = req.body;
     if (!userId) {
       return res.status(400).json({ error: 'Missing userId' });
     }
 
-    const db = getDB();
+    const db = await getDB(req);
     if (!db) {
       return res.status(500).json({ error: 'Database error' });
     }
@@ -818,7 +1848,7 @@ async function startServer() {
     }
 
     user.mandatoryCompleted = true;
-    saveDB(db);
+    await saveDB(db, req);
 
     res.json({
       success: true,
@@ -832,14 +1862,14 @@ async function startServer() {
   // -------------------------------------------------------------
 
   // Claim Gift Code
-  app.post('/api/gift-code/claim', (req, res) => {
+  app.post('/api/gift-code/claim', async (req, res) => {
     try {
       const { userId, code } = req.body;
       if (!userId || !code) {
         return res.status(400).json({ success: false, error: 'Missing userId or gift code' });
       }
 
-      const db = getDB();
+      const db = await getDB(req);
       if (!db) {
         return res.status(500).json({ success: false, error: 'Database error on server' });
       }
@@ -913,7 +1943,7 @@ async function startServer() {
         read: false
       });
 
-      saveDB(db);
+      await saveDB(db, req);
 
       res.json({
         success: true,
@@ -928,14 +1958,14 @@ async function startServer() {
   });
 
   // Generate Gift Codes
-  app.post('/api/gift-code/generate', (req, res) => {
+  app.post('/api/gift-code/generate', async (req, res) => {
     const { rewardAmount, count, maxClaims, expiryDate } = req.body;
     
     const countVal = Math.min(100, Math.max(1, Number(count) || 1));
     const rewardVal = Number(rewardAmount) || 0.01;
     const maxClaimsVal = Number(maxClaims) || 1;
 
-    const db = getDB();
+    const db = await getDB(req);
     if (!db) {
       return res.status(500).json({ success: false, error: 'Database error on server' });
     }
@@ -976,18 +2006,18 @@ async function startServer() {
       newCodes.push(giftObj);
     }
 
-    saveDB(db);
+    await saveDB(db, req);
     res.json({ success: true, db, newCodes });
   });
 
   // Toggle Gift Code status
-  app.post('/api/gift-code/toggle', (req, res) => {
+  app.post('/api/gift-code/toggle', async (req, res) => {
     const { code, isEnabled } = req.body;
     if (!code) {
       return res.status(400).json({ success: false, error: 'Missing code' });
     }
 
-    const db = getDB();
+    const db = await getDB(req);
     if (!db) {
       return res.status(500).json({ success: false, error: 'Database error' });
     }
@@ -999,59 +2029,73 @@ async function startServer() {
     const giftCode = db.giftCodes.find((gc: any) => gc.code === code);
     if (giftCode) {
       giftCode.isEnabled = !!isEnabled;
-      saveDB(db);
+      await saveDB(db, req);
     }
 
     res.json({ success: true, db });
   });
 
   // Delete Gift Code
-  app.post('/api/gift-code/delete', (req, res) => {
+  app.post('/api/gift-code/delete', async (req, res) => {
     const { code } = req.body;
     if (!code) {
       return res.status(400).json({ success: false, error: 'Missing code' });
     }
 
-    const db = getDB();
+    const db = await getDB(req);
     if (!db) {
       return res.status(500).json({ success: false, error: 'Database error' });
     }
 
     if (db.giftCodes) {
       db.giftCodes = db.giftCodes.filter((gc: any) => gc.code !== code);
-      saveDB(db);
+      await saveDB(db, req);
     }
 
     res.json({ success: true, db });
   });
 
   // Delete Batch of Gift Codes
-  app.post('/api/gift-code/delete-batch', (req, res) => {
+  app.post('/api/gift-code/delete-batch', async (req, res) => {
     const { codes } = req.body;
     if (!codes || !Array.isArray(codes)) {
       return res.status(400).json({ success: false, error: 'Missing codes array' });
     }
 
-    const db = getDB();
+    const db = await getDB(req);
     if (!db) {
       return res.status(500).json({ success: false, error: 'Database error' });
     }
 
     if (db.giftCodes) {
       db.giftCodes = db.giftCodes.filter((gc: any) => !codes.includes(gc.code));
-      saveDB(db);
+      await saveDB(db, req);
     }
 
     res.json({ success: true, db });
   });
 
   // Reset database for developer testing
-  app.post('/api/db/reset', (req, res) => {
-    if (fs.existsSync(DB_FILE)) {
-      fs.unlinkSync(DB_FILE);
+  app.post('/api/db/reset', async (req, res) => {
+    try {
+      sqliteDb.exec(`
+        DROP TABLE IF EXISTS settings;
+        DROP TABLE IF EXISTS users;
+        DROP TABLE IF EXISTS transfers;
+        DROP TABLE IF EXISTS withdrawals;
+        DROP TABLE IF EXISTS deposits;
+        DROP TABLE IF EXISTS transactions;
+        DROP TABLE IF EXISTS gift_codes;
+        DROP TABLE IF EXISTS completed_tasks;
+        DROP TABLE IF EXISTS tasks;
+        DROP TABLE IF EXISTS tickets;
+        DROP TABLE IF EXISTS claimed_bonuses;
+      `);
+    } catch (e) {
+      console.error("Failed to drop tables during reset", e);
     }
     initDatabase();
-    const db = getDB();
+    const db = await getDB(req);
     res.json({ success: true, db });
   });
 
@@ -1160,7 +2204,7 @@ async function startServer() {
   // USER-TO-USER TRANSFER SYSTEM (WITH OFFLINE UID SUPPORT)
   // -------------------------------------------------------------
 
-  app.post('/api/transfer', (req, res) => {
+  app.post('/api/transfer', async (req, res) => {
     try {
       const { senderId, receiverUid, amount } = req.body;
       const amountNum = parseFloat(amount);
@@ -1177,7 +2221,7 @@ async function startServer() {
         return res.status(400).json({ error: 'Transfer amount must be greater than zero.' });
       }
 
-      const db = getDB();
+      const db = await getDB(req);
       if (!db) {
         return res.status(500).json({ error: 'Database error.' });
       }
@@ -1274,7 +2318,7 @@ async function startServer() {
         read: false
       });
 
-      saveDB(db);
+      await saveDB(db, req);
 
       res.json({
         success: true,
@@ -1292,14 +2336,14 @@ async function startServer() {
   });
 
   // Cancel Pending Transfer (Refund Sender)
-  app.post('/api/admin/transfer/cancel', (req, res) => {
+  app.post('/api/admin/transfer/cancel', async (req, res) => {
     try {
       const { transferId } = req.body;
       if (!transferId) {
         return res.status(400).json({ error: 'Transfer ID is required.' });
       }
 
-      const db = getDB();
+      const db = await getDB(req);
       if (!db) {
         return res.status(500).json({ error: 'Database error.' });
       }
@@ -1345,7 +2389,7 @@ async function startServer() {
       }
 
       transfer.status = 'Cancelled';
-      saveDB(db);
+      await saveDB(db, req);
 
       res.json({ success: true, db });
     } catch (err: any) {
@@ -1355,14 +2399,14 @@ async function startServer() {
   });
 
   // Force Complete Transfer
-  app.post('/api/admin/transfer/complete', (req, res) => {
+  app.post('/api/admin/transfer/complete', async (req, res) => {
     try {
       const { transferId } = req.body;
       if (!transferId) {
         return res.status(400).json({ error: 'Transfer ID is required.' });
       }
 
-      const db = getDB();
+      const db = await getDB(req);
       if (!db) {
         return res.status(500).json({ error: 'Database error.' });
       }
@@ -1410,7 +2454,7 @@ async function startServer() {
       });
 
       transfer.status = 'Completed';
-      saveDB(db);
+      await saveDB(db, req);
 
       res.json({ success: true, db });
     } catch (err: any) {

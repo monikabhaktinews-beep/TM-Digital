@@ -95,7 +95,7 @@ export const ReferralTab: React.FC<ReferralTabProps> = ({
         <div className="text-left space-y-1">
           <h3 className="text-xs font-bold text-white uppercase tracking-wider font-display">Your Referral Link</h3>
           <p className="text-[10px] text-tg-text-muted leading-relaxed">
-            Every person who signs up using this link will instantly be registered under your network, awarding you <strong className="text-amber-400 font-bold">$0.03 USDT</strong> instantly.
+            Every person who signs up using this link will instantly be registered under your network, awarding you <strong className="text-amber-400 font-bold">${(db.settings?.referralRewardUSDT || 0.05)} USDT</strong> instantly.
           </p>
         </div>
 
@@ -147,7 +147,7 @@ export const ReferralTab: React.FC<ReferralTabProps> = ({
               <span className="text-[9px] text-tg-text-muted block mt-0.5">Awarded instantly upon friend registration</span>
             </div>
             <div className="text-right">
-              <span className="font-bold text-emerald-400 block font-mono">+$0.03 USDT</span>
+              <span className="font-bold text-emerald-400 block font-mono">+${(db.settings?.referralRewardUSDT || 0.05)} USDT</span>
               <span className="text-[9px] text-tg-text-muted block">Direct Balance</span>
             </div>
           </div>

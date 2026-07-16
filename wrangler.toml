@@ -1,0 +1,7 @@
+name = "tm-digital"
+compatibility_date = "2024-04-03"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "tm-digital-db"
+database_id = "f9a66ce8-1fec-426e-a3b5-fb77c68ba14b"
