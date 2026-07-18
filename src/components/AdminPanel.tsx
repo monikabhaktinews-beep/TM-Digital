@@ -600,17 +600,26 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
               setNewlyGeneratedCodes([]);
               setHasCopiedNewCodes(false);
               try {
-                const response = await fetch('/api/gift-code/generate', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({
-                    rewardAmount: Number(giftRewardAmount) || 0.1,
-                    count: Math.min(100, Math.max(1, Number(giftCodesCount) || 1)),
-                    maxClaims: Number(giftMaxClaims) || 1,
-                    expiryDate: giftExpiryDate || undefined
-                  })
-                });
-                const data = await response.json();
+                let responseText = '';
+                let data: any = {};
+                try {
+                  const response = await fetch('/api/gift-code/generate', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      rewardAmount: Number(giftRewardAmount) || 0.1,
+                      count: Math.min(100, Math.max(1, Number(giftCodesCount) || 1)),
+                      maxClaims: Number(giftMaxClaims) || 1,
+                      expiryDate: giftExpiryDate || undefined
+                    })
+                  });
+                  responseText = await response.text();
+                  data = JSON.parse(responseText);
+                } catch (parseErr: any) {
+                  console.error('Failed to parse server response as JSON:', parseErr);
+                  throw new Error(responseText ? `Server Error: ${responseText}` : `Network or connection failure: ${parseErr.message || String(parseErr)}`);
+                }
+
                 if (data.success) {
                   onDbUpdate(data.db);
                   const codesList = (data.newCodes || []).map((gc: any) => gc.code);
@@ -633,9 +642,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 } else {
                   alert(data.error || 'Failed to generate gift codes.');
                 }
-              } catch (err) {
+              } catch (err: any) {
                 console.error(err);
-                alert('Connection error.');
+                alert(`Error: ${err.message || 'Connection error.'}`);
               } finally {
                 setIsGenerating(false);
               }

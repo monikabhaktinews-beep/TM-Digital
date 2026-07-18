@@ -192,11 +192,14 @@ export interface AppDatabase {
   lastInterestPayout?: string; // ISO string of last automatic interest settlement
   giftCodes?: GiftCode[]; // Gift codes list
   claimedTransfers?: { id: string; senderUid: number; amountTM: number; timestamp: string }[];
+  giftCodeRedemptions?: { telegram_id: string; gift_code: string; redeemed_at: string }[];
 }
 
 export interface GiftCode {
   code: string;
   rewardAmount: number;
+  rewardTM?: number;
+  rewardUSDT?: number;
   maxClaims: number;
   claimsCount: number;
   expiryDate?: string; // Optional expiry date

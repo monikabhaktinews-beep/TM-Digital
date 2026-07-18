@@ -81,3 +81,34 @@ ALTER TABLE users DISABLE ROW LEVEL SECURITY;
 ALTER TABLE referrals DISABLE ROW LEVEL SECURITY;
 ALTER TABLE transactions DISABLE ROW LEVEL SECURITY;
 ALTER TABLE withdrawals DISABLE ROW LEVEL SECURITY;
+
+-- 6. Create the Gift Codes table
+CREATE TABLE IF NOT EXISTS gift_codes (
+    code TEXT PRIMARY KEY,
+    reward_tm NUMERIC NOT NULL DEFAULT 0.0,
+    reward_usdt NUMERIC NOT NULL DEFAULT 0.0,
+    reward_amount NUMERIC NOT NULL DEFAULT 0.0,
+    max_claims INTEGER NOT NULL DEFAULT 1,
+    claims_count INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    expiry_date TIMESTAMPTZ,
+    is_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    claimed_by TEXT NOT NULL DEFAULT '[]' -- JSON array of Telegram IDs
+);
+
+-- 7. Create the Gift Code Redemptions table
+CREATE TABLE IF NOT EXISTS gift_code_redemptions (
+    id BIGSERIAL PRIMARY KEY,
+    telegram_id TEXT NOT NULL,
+    gift_code TEXT NOT NULL REFERENCES gift_codes(code) ON DELETE CASCADE,
+    redeemed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (telegram_id, gift_code)
+);
+
+-- Index for performance optimization
+CREATE INDEX IF NOT EXISTS idx_gift_code_redemptions_telegram_id ON gift_code_redemptions(telegram_id);
+CREATE INDEX IF NOT EXISTS idx_gift_code_redemptions_gift_code ON gift_code_redemptions(gift_code);
+
+ALTER TABLE gift_codes DISABLE ROW LEVEL SECURITY;
+ALTER TABLE gift_code_redemptions DISABLE ROW LEVEL SECURITY;
+

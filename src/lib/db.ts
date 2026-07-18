@@ -607,7 +607,8 @@ export const getDB = (): AppDatabase => {
     claimedBonuses: { ...DEFAULT_CLAIMED_BONUSES },
     taskSubmissions: [],
     notifications: [],
-    lastInterestPayout: new Date().toISOString()
+    lastInterestPayout: new Date().toISOString(),
+    giftCodeRedemptions: []
   };
   cachedDb = db;
   return db;
@@ -655,7 +656,8 @@ export const saveDB = (db: AppDatabase) => {
         giftCodes: db.giftCodes,
         completedTasks: db.completedTasks,
         claimedBonuses: db.claimedBonuses,
-        lastInterestPayout: db.lastInterestPayout
+        lastInterestPayout: db.lastInterestPayout,
+        giftCodeRedemptions: db.giftCodeRedemptions || []
       };
       await supabase.from('app_state').upsert({ id: 'global', data: globalData });
 
@@ -908,7 +910,8 @@ export const loadDBFromServer = async (userId: string, extraData: any = {}): Pro
       taskSubmissions: globalState.taskSubmissions || [],
       notifications: globalState.notifications || [],
       lastInterestPayout: globalState.lastInterestPayout || new Date().toISOString(),
-      giftCodes: globalState.giftCodes || []
+      giftCodes: globalState.giftCodes || [],
+      giftCodeRedemptions: globalState.giftCodeRedemptions || []
     };
 
     if (userProfile && !db.users.some(u => u.id === userProfile!.id)) {

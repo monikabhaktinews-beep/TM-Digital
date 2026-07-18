@@ -1420,6 +1420,61 @@ async function getDB(req?: any): Promise<any> {
       processedAt: row.processed_at || undefined
     })) : [];
 
+    // Fetch gift_codes from Supabase
+    let giftCodes = globalState.giftCodes || [];
+    try {
+      const { data: gcRows, error: gcError } = await supabase.from('gift_codes').select('*');
+      if (gcError) {
+        console.warn('[Supabase Server] Failed to fetch gift_codes table, using globalState as fallback.', gcError);
+      } else if (gcRows && gcRows.length > 0) {
+        giftCodes = gcRows.map((row: any) => {
+          let claimedByArr: string[] = [];
+          try {
+            if (row.claimed_by) {
+              claimedByArr = JSON.parse(row.claimed_by);
+            }
+          } catch (e) {
+            if (typeof row.claimed_by === 'string' && row.claimed_by.trim() !== '') {
+              claimedByArr = row.claimed_by.split(',').map((s: string) => s.trim()).filter(Boolean);
+            }
+          }
+          return {
+            code: row.code,
+            rewardAmount: Number(row.reward_amount || 0),
+            rewardTM: Number(row.reward_tm || 0),
+            rewardUSDT: Number(row.reward_usdt || 0),
+            maxClaims: Number(row.max_claims || 1),
+            claimsCount: Number(row.claims_count || 0),
+            expiryDate: row.expiry_date || undefined,
+            isEnabled: row.is_enabled === true || row.is_enabled === 1,
+            claimedBy: claimedByArr,
+            createdAt: row.created_at || new Date().toISOString()
+          };
+        });
+        console.log(`[Supabase Server] Successfully loaded ${giftCodes.length} gift codes from separate table.`);
+      }
+    } catch (err) {
+      console.warn('[Supabase Server] Failed to query gift_codes, using globalState as fallback.', err);
+    }
+
+    // Fetch gift_code_redemptions from Supabase
+    let giftCodeRedemptions = globalState.giftCodeRedemptions || [];
+    try {
+      const { data: redemptionRows, error: rError } = await supabase.from('gift_code_redemptions').select('*');
+      if (rError) {
+        console.warn('[Supabase Server] Failed to fetch gift_code_redemptions table, using globalState as fallback.', rError);
+      } else if (redemptionRows && redemptionRows.length > 0) {
+        giftCodeRedemptions = redemptionRows.map((row: any) => ({
+          telegram_id: row.telegram_id,
+          gift_code: row.gift_code,
+          redeemed_at: row.redeemed_at
+        }));
+        console.log(`[Supabase Server] Successfully loaded ${giftCodeRedemptions.length} gift code redemptions from separate table.`);
+      }
+    } catch (err) {
+      console.warn('[Supabase Server] Failed to query gift_code_redemptions, using globalState as fallback.', err);
+    }
+
     const db: any = {
       users: users,
       tasks: globalState.tasks || DEFAULT_TASKS,
@@ -1436,7 +1491,8 @@ async function getDB(req?: any): Promise<any> {
       taskSubmissions: globalState.taskSubmissions || [],
       notifications: globalState.notifications || [],
       lastInterestPayout: globalState.lastInterestPayout || new Date().toISOString(),
-      giftCodes: globalState.giftCodes || []
+      giftCodes: giftCodes,
+      giftCodeRedemptions: giftCodeRedemptions
     };
 
     return db;
@@ -1537,9 +1593,59 @@ async function saveDB(dbState: any, req?: any): Promise<void> {
       giftCodes: dbState.giftCodes,
       completedTasks: dbState.completedTasks,
       claimedBonuses: dbState.claimedBonuses,
-      lastInterestPayout: dbState.lastInterestPayout
+      lastInterestPayout: dbState.lastInterestPayout,
+      giftCodeRedemptions: dbState.giftCodeRedemptions || []
     };
     await supabase.from('app_state').upsert({ id: 'global', data: globalData });
+
+    // 5. Save gift_codes to separate table in Supabase if exists
+    if (dbState.giftCodes && Array.isArray(dbState.giftCodes)) {
+      try {
+        const gcPayloads = dbState.giftCodes.map((gc: any) => ({
+          code: gc.code,
+          reward_tm: Number(gc.rewardTM || 0),
+          reward_usdt: Number(gc.rewardUSDT || 0),
+          reward_amount: Number(gc.rewardAmount || 0),
+          max_claims: Number(gc.maxClaims || 1),
+          claims_count: Number(gc.claimsCount || 0),
+          created_at: gc.createdAt || new Date().toISOString(),
+          expiry_date: gc.expiryDate || null,
+          is_enabled: gc.isEnabled !== false,
+          claimed_by: JSON.stringify(gc.claimedBy || [])
+        }));
+        if (gcPayloads.length > 0) {
+          const { error: gcErr } = await supabase.from('gift_codes').upsert(gcPayloads);
+          if (gcErr) {
+            console.warn('[Supabase Server] Failed to upsert to gift_codes table:', gcErr.message);
+          } else {
+            console.log(`[Supabase Server] Successfully saved ${gcPayloads.length} gift codes to table.`);
+          }
+        }
+      } catch (err: any) {
+        console.warn('[Supabase Server] Failed to save gift_codes to separate table:', err.message || err);
+      }
+    }
+
+    // 6. Save gift_code_redemptions to separate table in Supabase if exists
+    if (dbState.giftCodeRedemptions && Array.isArray(dbState.giftCodeRedemptions)) {
+      try {
+        const redemptionPayloads = dbState.giftCodeRedemptions.map((r: any) => ({
+          telegram_id: r.telegram_id,
+          gift_code: r.gift_code,
+          redeemed_at: r.redeemed_at || new Date().toISOString()
+        }));
+        if (redemptionPayloads.length > 0) {
+          const { error: rErr } = await supabase.from('gift_code_redemptions').upsert(redemptionPayloads, { onConflict: 'telegram_id,gift_code' });
+          if (rErr) {
+            console.warn('[Supabase Server] Failed to upsert to gift_code_redemptions table:', rErr.message);
+          } else {
+            console.log(`[Supabase Server] Successfully saved ${redemptionPayloads.length} gift code redemptions to table.`);
+          }
+        }
+      } catch (err: any) {
+        console.warn('[Supabase Server] Failed to save gift_code_redemptions to separate table:', err.message || err);
+      }
+    }
 
   } catch (err) {
     console.error('[Supabase Server] saveDB failed, falling back to local SQLite.', err);
@@ -2090,6 +2196,10 @@ async function startServer() {
         db.giftCodes = [];
       }
 
+      if (!db.giftCodeRedemptions) {
+        db.giftCodeRedemptions = [];
+      }
+
       const cleanedCode = code.trim().toUpperCase();
       const giftCode = db.giftCodes.find((gc: any) => gc && typeof gc.code === 'string' && gc.code.toUpperCase() === cleanedCode);
 
@@ -2105,33 +2215,46 @@ async function startServer() {
         return res.status(400).json({ success: false, error: 'This Gift Code has expired.' });
       }
 
-      if (giftCode.claimsCount >= giftCode.maxClaims) {
-        return res.status(400).json({ success: false, error: 'This Gift Code has reached its maximum claims limit.' });
+      // Check if the current Telegram ID has already redeemed this gift code
+      const alreadyRedeemed = (giftCode.claimedBy && giftCode.claimedBy.includes(userId)) ||
+        db.giftCodeRedemptions.some((r: any) => r && r.telegram_id === userId && typeof r.gift_code === 'string' && r.gift_code.toUpperCase() === cleanedCode);
+
+      if (alreadyRedeemed) {
+        return res.status(400).json({ success: false, error: '❌ You have already redeemed this gift code.' });
       }
 
-      if (!giftCode.claimedBy) {
-        giftCode.claimedBy = [];
-      }
-
-      if (giftCode.claimedBy.includes(userId)) {
-        return res.status(400).json({ success: false, error: 'You have already claimed this Gift Code.' });
+      // Check if gift code is already claimed/used to its limit (globally max 1 claim or custom maxClaims)
+      const claimsCount = giftCode.claimsCount || 0;
+      const maxClaims = giftCode.maxClaims !== undefined ? giftCode.maxClaims : 1;
+      if (claimsCount >= maxClaims || claimsCount >= 1) {
+        return res.status(400).json({ success: false, error: 'This gift code has already been redeemed.' });
       }
 
       // Process valid claim
       giftCode.claimsCount = (giftCode.claimsCount || 0) + 1;
+      if (!giftCode.claimedBy) {
+        giftCode.claimedBy = [];
+      }
       giftCode.claimedBy.push(userId);
 
-      const reward = Number(giftCode.rewardAmount || 0);
-      user.balanceUSDT = Number(((user.balanceUSDT || 0) + reward).toFixed(4));
-      user.lifetimeEarningsUSDT = Number(((user.lifetimeEarningsUSDT || 0) + reward).toFixed(4));
+      // Save the redemption record
+      db.giftCodeRedemptions.push({
+        telegram_id: userId,
+        gift_code: cleanedCode,
+        redeemed_at: new Date().toISOString()
+      });
+
+      // Add the TM reward (using rewardTM if defined, otherwise falling back to rewardAmount)
+      const rewardTM = Number(giftCode.rewardTM || giftCode.rewardAmount || 0);
+      user.balanceTM = Number(((user.balanceTM || 0) + rewardTM).toFixed(4));
 
       // Create a transaction
       db.transactions.unshift({
         id: `tx_gift_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
         userId: userId,
         type: 'Reward',
-        amountTM: 0,
-        amountUSDT: reward,
+        amountTM: rewardTM,
+        amountUSDT: Number(giftCode.rewardUSDT || 0),
         description: `Gift Code Claimed: ${giftCode.code}`,
         createdAt: new Date().toISOString()
       });
@@ -2144,7 +2267,7 @@ async function startServer() {
         id: `notif_gift_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
         userId: userId,
         title: 'Gift Code Claimed! 🎁',
-        message: `Successfully claimed code ${giftCode.code}! received +$${reward.toFixed(2)} USDT.`,
+        message: `Successfully claimed code ${giftCode.code}! received +${rewardTM} TM.`,
         type: 'task_completed',
         createdAt: new Date().toISOString(),
         read: false
@@ -2154,7 +2277,7 @@ async function startServer() {
 
       res.json({
         success: true,
-        message: `Successfully claimed! +$${reward.toFixed(2)} USDT credited to your balance.`,
+        message: '✅ Gift code redeemed successfully!',
         db,
         user
       });
@@ -2166,120 +2289,204 @@ async function startServer() {
 
   // Generate Gift Codes
   app.post('/api/gift-code/generate', async (req, res) => {
-    const { rewardAmount, count, maxClaims, expiryDate } = req.body;
-    
-    const countVal = Math.min(100, Math.max(1, Number(count) || 1));
-    const rewardVal = Number(rewardAmount) || 0.01;
-    const maxClaimsVal = Number(maxClaims) || 1;
+    try {
+      const { rewardAmount, count, maxClaims, expiryDate } = req.body;
+      console.log('[Server Gift Code Generate] Request received:', { rewardAmount, count, maxClaims, expiryDate });
+      
+      const countVal = Math.min(100, Math.max(1, Number(count) || 1));
+      const rewardVal = Number(rewardAmount) || 0.01;
+      const maxClaimsVal = Number(maxClaims) || 1;
 
-    const db = await getDB(req);
-    if (!db) {
-      return res.status(500).json({ success: false, error: 'Database error on server' });
-    }
+      console.log('[Server Gift Code Generate] Fetching database...');
+      const db = await getDB(req);
+      if (!db) {
+        console.error('[Server Gift Code Generate] Database is null or undefined!');
+        return res.status(500).json({ success: false, error: 'Database loading failed on server.' });
+      }
 
-    if (!db.giftCodes) {
-      db.giftCodes = [];
-    }
+      if (!db.giftCodes) {
+        db.giftCodes = [];
+      }
 
-    const existingCodes = new Set(db.giftCodes.map((gc: any) => gc.code));
-    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+      console.log(`[Server Gift Code Generate] Currently loaded gift codes count: ${db.giftCodes.length}`);
 
-    const generateUniqueCode = () => {
-      let code = '';
-      do {
-        const part1 = Array.from({ length: 4 }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
-        const part2 = Array.from({ length: 4 }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
-        code = `TM-GFT-${part1}-${part2}`;
-      } while (existingCodes.has(code));
-      return code;
-    };
+      const existingCodes = new Set(
+        (db.giftCodes || [])
+          .filter((gc: any) => gc && typeof gc === 'object' && typeof gc.code === 'string')
+          .map((gc: any) => gc.code)
+      );
+      const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
 
-    const newCodes = [];
-    for (let i = 0; i < countVal; i++) {
-      const codeStr = generateUniqueCode();
-      existingCodes.add(codeStr);
-
-      const giftObj = {
-        code: codeStr,
-        rewardAmount: rewardVal,
-        maxClaims: maxClaimsVal,
-        claimsCount: 0,
-        expiryDate: expiryDate ? new Date(expiryDate).toISOString() : undefined,
-        isEnabled: true,
-        createdAt: new Date().toISOString(),
-        claimedBy: []
+      const generateUniqueCode = () => {
+        let code = '';
+        let attempts = 0;
+        do {
+          const part1 = Array.from({ length: 4 }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
+          const part2 = Array.from({ length: 4 }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
+          code = `TM-GFT-${part1}-${part2}`;
+          attempts++;
+          if (attempts > 1000) {
+            throw new Error('Too many attempts trying to generate a unique gift code.');
+          }
+        } while (existingCodes.has(code));
+        return code;
       };
-      db.giftCodes.push(giftObj);
-      newCodes.push(giftObj);
-    }
 
-    await saveDB(db, req);
-    res.json({ success: true, db, newCodes });
+      const newCodes = [];
+      for (let i = 0; i < countVal; i++) {
+        const codeStr = generateUniqueCode();
+        existingCodes.add(codeStr);
+
+        const giftObj = {
+          code: codeStr,
+          rewardAmount: rewardVal,
+          rewardTM: rewardVal,
+          rewardUSDT: 0,
+          maxClaims: maxClaimsVal,
+          claimsCount: 0,
+          claimedCount: 0,
+          expiryDate: expiryDate ? new Date(expiryDate).toISOString() : undefined,
+          isEnabled: true,
+          createdAt: new Date().toISOString(),
+          claimedBy: []
+        };
+        db.giftCodes.push(giftObj);
+        newCodes.push(giftObj);
+      }
+
+      console.log(`[Server Gift Code Generate] Successfully generated ${newCodes.length} codes locally. Saving to database...`);
+      
+      try {
+        await saveDB(db, req);
+        console.log('[Server Gift Code Generate] Database saved successfully.');
+      } catch (saveErr: any) {
+        console.error('[Server Gift Code Generate] Failed to save database:', saveErr);
+        throw new Error(`Database persistence failed: ${saveErr.message || String(saveErr)}`);
+      }
+
+      res.json({ success: true, db, newCodes });
+    } catch (err: any) {
+      console.error('[Server Gift Code Generate Error]', err);
+      res.status(500).json({ success: false, error: err.message || String(err) });
+    }
   });
 
   // Toggle Gift Code status
   app.post('/api/gift-code/toggle', async (req, res) => {
-    const { code, isEnabled } = req.body;
-    if (!code) {
-      return res.status(400).json({ success: false, error: 'Missing code' });
-    }
+    try {
+      const { code, isEnabled } = req.body;
+      if (!code) {
+        return res.status(400).json({ success: false, error: 'Missing code' });
+      }
 
-    const db = await getDB(req);
-    if (!db) {
-      return res.status(500).json({ success: false, error: 'Database error' });
-    }
+      console.log(`[Server Gift Code Toggle] Toggling status of '${code}' to isEnabled=${isEnabled}`);
+      const db = await getDB(req);
+      if (!db) {
+        return res.status(500).json({ success: false, error: 'Database error' });
+      }
 
-    if (!db.giftCodes) {
-      db.giftCodes = [];
-    }
+      if (!db.giftCodes) {
+        db.giftCodes = [];
+      }
 
-    const giftCode = db.giftCodes.find((gc: any) => gc.code === code);
-    if (giftCode) {
-      giftCode.isEnabled = !!isEnabled;
-      await saveDB(db, req);
-    }
+      const giftCode = db.giftCodes.find((gc: any) => gc && gc.code === code);
+      if (giftCode) {
+        giftCode.isEnabled = !!isEnabled;
+        await saveDB(db, req);
+        console.log(`[Server Gift Code Toggle] Code '${code}' toggled successfully.`);
+      } else {
+        console.warn(`[Server Gift Code Toggle] Code '${code}' not found in state.`);
+      }
 
-    res.json({ success: true, db });
+      res.json({ success: true, db });
+    } catch (err: any) {
+      console.error('[Server Gift Code Toggle Error]', err);
+      res.status(500).json({ success: false, error: err.message || String(err) });
+    }
   });
 
   // Delete Gift Code
   app.post('/api/gift-code/delete', async (req, res) => {
-    const { code } = req.body;
-    if (!code) {
-      return res.status(400).json({ success: false, error: 'Missing code' });
-    }
+    try {
+      const { code } = req.body;
+      if (!code) {
+        return res.status(400).json({ success: false, error: 'Missing code' });
+      }
 
-    const db = await getDB(req);
-    if (!db) {
-      return res.status(500).json({ success: false, error: 'Database error' });
-    }
+      console.log(`[Server Gift Code Delete] Deleting code: ${code}`);
+      const db = await getDB(req);
+      if (!db) {
+        return res.status(500).json({ success: false, error: 'Database error' });
+      }
 
-    if (db.giftCodes) {
-      db.giftCodes = db.giftCodes.filter((gc: any) => gc.code !== code);
+      if (db.giftCodes) {
+        db.giftCodes = db.giftCodes.filter((gc: any) => gc && gc.code !== code);
+      }
+
+      // Synchronize deletion directly with the Supabase dedicated table if connection exists
+      const sUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+      const sKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+      if (sUrl && sKey) {
+        try {
+          const { error } = await supabase.from('gift_codes').delete().eq('code', code);
+          if (error) {
+            console.warn('[Supabase Server] Failed to delete code from separate table:', error.message);
+          } else {
+            console.log(`[Supabase Server] Deleted gift code '${code}' from separate table.`);
+          }
+        } catch (dbErr) {
+          console.warn('[Supabase Server] Failed to delete code from separate table:', dbErr);
+        }
+      }
+
       await saveDB(db, req);
+      res.json({ success: true, db });
+    } catch (err: any) {
+      console.error('[Server Gift Code Delete Error]', err);
+      res.status(500).json({ success: false, error: err.message || String(err) });
     }
-
-    res.json({ success: true, db });
   });
 
   // Delete Batch of Gift Codes
   app.post('/api/gift-code/delete-batch', async (req, res) => {
-    const { codes } = req.body;
-    if (!codes || !Array.isArray(codes)) {
-      return res.status(400).json({ success: false, error: 'Missing codes array' });
-    }
+    try {
+      const { codes } = req.body;
+      if (!codes || !Array.isArray(codes)) {
+        return res.status(400).json({ success: false, error: 'Missing codes array' });
+      }
 
-    const db = await getDB(req);
-    if (!db) {
-      return res.status(500).json({ success: false, error: 'Database error' });
-    }
+      console.log(`[Server Gift Code Delete Batch] Deleting ${codes.length} codes`);
+      const db = await getDB(req);
+      if (!db) {
+        return res.status(500).json({ success: false, error: 'Database error' });
+      }
 
-    if (db.giftCodes) {
-      db.giftCodes = db.giftCodes.filter((gc: any) => !codes.includes(gc.code));
+      if (db.giftCodes) {
+        db.giftCodes = db.giftCodes.filter((gc: any) => gc && !codes.includes(gc.code));
+      }
+
+      // Synchronize deletion directly with the Supabase dedicated table if connection exists
+      const sUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+      const sKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+      if (sUrl && sKey) {
+        try {
+          const { error } = await supabase.from('gift_codes').delete().in('code', codes);
+          if (error) {
+            console.warn('[Supabase Server] Failed to delete batch from separate table:', error.message);
+          } else {
+            console.log(`[Supabase Server] Deleted batch of ${codes.length} codes from separate table.`);
+          }
+        } catch (dbErr) {
+          console.warn('[Supabase Server] Failed to delete batch from separate table:', dbErr);
+        }
+      }
+
       await saveDB(db, req);
+      res.json({ success: true, db });
+    } catch (err: any) {
+      console.error('[Server Gift Code Delete Batch Error]', err);
+      res.status(500).json({ success: false, error: err.message || String(err) });
     }
-
-    res.json({ success: true, db });
   });
 
   // Reset database for developer testing
