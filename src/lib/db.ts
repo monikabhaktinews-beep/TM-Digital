@@ -2120,7 +2120,7 @@ export const executeUserTransfer = async (
     if (response.ok) {
       const data = await response.json();
       if (data.db) {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(data.db));
+        cachedDb = data.db;
       }
       return data;
     } else {
