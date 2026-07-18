@@ -5,9 +5,17 @@ import { createServer as createViteServer } from 'vite';
 import dotenv from 'dotenv';
 import crypto from 'crypto';
 import Database from 'better-sqlite3';
+import { createClient } from '@supabase/supabase-js';
 
 // Load env variables
 dotenv.config();
+
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
+const supabase = createClient(
+  supabaseUrl || 'https://placeholder-url.supabase.co',
+  supabaseAnonKey || 'placeholder-anon-key'
+);
 
 const PORT = 3000;
 const DB_FILE = path.join(process.cwd(), 'd1_database.db');
@@ -1322,22 +1330,221 @@ function saveDBToLocal(dbState: any) {
 
 // Get DB helper
 async function getDB(req?: any): Promise<any> {
-  const d1 = getActiveD1(req);
-  if (d1) {
-    await initD1Database(d1);
-    return await getDBFromD1(d1);
+  try {
+    const sUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const sKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+    if (!sUrl || !sKey) {
+      console.warn('[Supabase Server] Credentials missing, falling back to local SQLite.');
+      return getDBFromLocal();
+    }
+
+    // Fetch global state
+    const { data: appStateRow, error: appStateError } = await supabase
+      .from('app_state')
+      .select('*')
+      .eq('id', 'global')
+      .single();
+
+    let globalState: any = {};
+    if (appStateRow && appStateRow.data) {
+      globalState = typeof appStateRow.data === 'string' ? JSON.parse(appStateRow.data) : appStateRow.data;
+    }
+
+    // Fetch all users from users table
+    const { data: userRows, error: userError } = await supabase
+      .from('users')
+      .select('*');
+
+    const users = userRows ? userRows.map((row: any) => {
+      let claimedMilestones: number[] = [];
+      try {
+        if (row.claimed_milestones) {
+          claimedMilestones = JSON.parse(row.claimed_milestones);
+        }
+      } catch (e) {
+        if (Array.isArray(row.claimed_milestones)) {
+          claimedMilestones = row.claimed_milestones;
+        }
+      }
+      return {
+        id: row.id,
+        uid: Number(row.uid),
+        username: row.username || undefined,
+        firstName: row.first_name || '',
+        lastName: row.last_name || undefined,
+        photoUrl: row.photo_url || undefined,
+        languageCode: row.language_code || undefined,
+        registeredAt: row.registered_at || new Date().toISOString(),
+        balanceTM: Number(row.balance_tm || 0),
+        balanceUSDT: Number(row.balance_usdt || 0),
+        lifetimeEarningsUSDT: Number(row.lifetime_earnings_usdt || 0),
+        referralEarningsUSDT: Number(row.referral_earnings_usdt || 0),
+        todayBonusUSDT: Number(row.today_bonus_usdt || 0),
+        depositStatus: row.deposit_status || 'None',
+        withdrawStatus: row.withdraw_status || 'None',
+        referralCount: Number(row.referral_count || 0),
+        referralCounted: row.referral_counted === true || row.referral_counted === 1,
+        referredBy: row.referred_by || undefined,
+        claimedMilestones,
+        isFrozen: row.is_frozen === true || row.is_frozen === 1,
+        isBanned: row.is_banned === true || row.is_banned === 1,
+        mandatoryCompleted: row.mandatory_completed === true || row.mandatory_completed === 1
+      };
+    }) : [];
+
+    // Fetch all transactions from transactions table
+    const { data: txRows } = await supabase.from('transactions').select('*');
+    const transactions = txRows ? txRows.map((row: any) => ({
+      id: row.id,
+      userId: row.user_id,
+      type: row.type,
+      amountTM: Number(row.amount_tm || 0),
+      amountUSDT: Number(row.amount_usdt || 0),
+      description: row.description || '',
+      createdAt: row.created_at || new Date().toISOString()
+    })) : [];
+
+    // Fetch all withdrawals from withdrawals table
+    const { data: wdRows } = await supabase.from('withdrawals').select('*');
+    const withdrawals = wdRows ? wdRows.map((row: any) => ({
+      id: row.id,
+      userId: row.user_id,
+      userUsername: row.user_username || undefined,
+      userFirstName: row.user_first_name || '',
+      amountUSDT: Number(row.amount_usdt || 0),
+      walletAddress: row.wallet_address || '',
+      ruleId: row.rule_id || '',
+      ruleDescription: row.rule_description || '',
+      status: row.status || 'Pending',
+      createdAt: row.created_at || new Date().toISOString(),
+      processedAt: row.processed_at || undefined
+    })) : [];
+
+    const db: any = {
+      users: users,
+      tasks: globalState.tasks || DEFAULT_TASKS,
+      channels: globalState.channels || [],
+      deposits: globalState.deposits || [],
+      withdrawals: withdrawals.length > 0 ? withdrawals : (globalState.withdrawals || []),
+      withdrawalRules: globalState.withdrawalRules || [],
+      transactions: transactions.length > 0 ? transactions : (globalState.transactions || []),
+      transfers: globalState.transfers || [],
+      tickets: globalState.tickets || [],
+      settings: { ...DEFAULT_SETTINGS, ...(globalState.settings || {}) },
+      completedTasks: globalState.completedTasks || {},
+      claimedBonuses: globalState.claimedBonuses || {},
+      taskSubmissions: globalState.taskSubmissions || [],
+      notifications: globalState.notifications || [],
+      lastInterestPayout: globalState.lastInterestPayout || new Date().toISOString(),
+      giftCodes: globalState.giftCodes || []
+    };
+
+    return db;
+  } catch (err) {
+    console.error('[Supabase Server] getDB failed, falling back to local SQLite.', err);
+    return getDBFromLocal();
   }
-  return getDBFromLocal();
 }
 
 // Save DB helper
 async function saveDB(dbState: any, req?: any): Promise<void> {
-  const d1 = getActiveD1(req);
-  if (d1) {
-    await saveDBToD1(dbState, d1);
-    return;
+  try {
+    const sUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const sKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+    if (!sUrl || !sKey) {
+      console.warn('[Supabase Server] Credentials missing, falling back to local SQLite.');
+      saveDBToLocal(dbState);
+      return;
+    }
+
+    // 1. Save all users to Supabase
+    if (dbState.users && Array.isArray(dbState.users)) {
+      for (const u of dbState.users) {
+        await supabase.from('users').upsert({
+          id: u.id,
+          uid: u.uid,
+          username: u.username || null,
+          first_name: u.firstName,
+          last_name: u.lastName || null,
+          photo_url: u.photoUrl || null,
+          language_code: u.languageCode || null,
+          registered_at: u.registeredAt,
+          balance_tm: u.balanceTM,
+          balance_usdt: u.balanceUSDT,
+          lifetime_earnings_usdt: u.lifetimeEarningsUSDT,
+          referral_earnings_usdt: u.referralEarningsUSDT,
+          today_bonus_usdt: u.todayBonusUSDT,
+          deposit_status: u.depositStatus,
+          withdraw_status: u.withdrawStatus,
+          referral_count: u.referralCount,
+          referral_counted: u.referralCounted || false,
+          referred_by: u.referredBy || null,
+          claimed_milestones: JSON.stringify(u.claimedMilestones || []),
+          is_frozen: u.isFrozen || false,
+          is_banned: u.isBanned || false,
+          mandatory_completed: u.mandatoryCompleted || false
+        });
+      }
+    }
+
+    // 2. Save transactions
+    if (dbState.transactions && Array.isArray(dbState.transactions)) {
+      const txPayloads = dbState.transactions.map((tx: any) => ({
+        id: tx.id,
+        user_id: tx.userId,
+        type: tx.type,
+        amount_tm: tx.amountTM,
+        amount_usdt: tx.amountUSDT,
+        description: tx.description,
+        created_at: tx.createdAt
+      }));
+      if (txPayloads.length > 0) {
+        await supabase.from('transactions').upsert(txPayloads);
+      }
+    }
+
+    // 3. Save withdrawals
+    if (dbState.withdrawals && Array.isArray(dbState.withdrawals)) {
+      const wdPayloads = dbState.withdrawals.map((wd: any) => ({
+        id: wd.id,
+        user_id: wd.userId,
+        user_username: wd.userUsername || null,
+        user_first_name: wd.userFirstName,
+        amount_usdt: wd.amountUSDT,
+        wallet_address: wd.walletAddress,
+        rule_id: wd.ruleId,
+        rule_description: wd.ruleDescription,
+        status: wd.status,
+        created_at: wd.createdAt,
+        processed_at: wd.processedAt || null
+      }));
+      if (wdPayloads.length > 0) {
+        await supabase.from('withdrawals').upsert(wdPayloads);
+      }
+    }
+
+    // 4. Save global state
+    const globalData = {
+      tasks: dbState.tasks,
+      channels: dbState.channels,
+      settings: dbState.settings,
+      withdrawalRules: dbState.withdrawalRules,
+      deposits: dbState.deposits,
+      tickets: dbState.tickets,
+      taskSubmissions: dbState.taskSubmissions,
+      notifications: dbState.notifications,
+      transfers: dbState.transfers,
+      giftCodes: dbState.giftCodes,
+      completedTasks: dbState.completedTasks,
+      claimedBonuses: dbState.claimedBonuses,
+      lastInterestPayout: dbState.lastInterestPayout
+    };
+    await supabase.from('app_state').upsert({ id: 'global', data: globalData });
+
+  } catch (err) {
+    console.error('[Supabase Server] saveDB failed, falling back to local SQLite.', err);
+    saveDBToLocal(dbState);
   }
-  saveDBToLocal(dbState);
 }
 
 async function startServer() {

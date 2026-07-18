@@ -1,8 +1,131 @@
 import { AppDatabase, UserProfile, Task, Channel, DepositRequest, WithdrawalRequest, WithdrawalRule, Transaction, SupportTicket, SystemSettings, TaskSubmission } from '../types';
+import { supabase } from './supabaseClient';
 
 const STORAGE_KEY = 'tm_digital_database_v1';
 
 let currentActiveUserId: string | null = null;
+let cachedDb: AppDatabase | null = null;
+
+export const mapUserFromSupabase = (row: any): UserProfile => {
+  let claimedMilestones: number[] = [];
+  try {
+    if (row.claimed_milestones) {
+      claimedMilestones = JSON.parse(row.claimed_milestones);
+    }
+  } catch (e) {
+    if (Array.isArray(row.claimed_milestones)) {
+      claimedMilestones = row.claimed_milestones;
+    }
+  }
+
+  return {
+    id: row.id,
+    uid: Number(row.uid),
+    username: row.username || undefined,
+    firstName: row.first_name || '',
+    lastName: row.last_name || undefined,
+    photoUrl: row.photo_url || undefined,
+    languageCode: row.language_code || undefined,
+    registeredAt: row.registered_at || new Date().toISOString(),
+    balanceTM: Number(row.balance_tm || 0),
+    balanceUSDT: Number(row.balance_usdt || 0),
+    lifetimeEarningsUSDT: Number(row.lifetime_earnings_usdt || 0),
+    referralEarningsUSDT: Number(row.referral_earnings_usdt || 0),
+    todayBonusUSDT: Number(row.today_bonus_usdt || 0),
+    depositStatus: row.deposit_status || 'None',
+    withdrawStatus: row.withdraw_status || 'None',
+    referralCount: Number(row.referral_count || 0),
+    referralCounted: row.referral_counted === true || row.referral_counted === 1,
+    referredBy: row.referred_by || undefined,
+    claimedMilestones,
+    isFrozen: row.is_frozen === true || row.is_frozen === 1,
+    isBanned: row.is_banned === true || row.is_banned === 1,
+    mandatoryCompleted: row.mandatory_completed === true || row.mandatory_completed === 1,
+  };
+};
+
+export const mapUserToSupabase = (profile: UserProfile) => {
+  return {
+    id: profile.id,
+    uid: profile.uid,
+    username: profile.username || null,
+    first_name: profile.firstName,
+    last_name: profile.lastName || null,
+    photo_url: profile.photoUrl || null,
+    language_code: profile.languageCode || null,
+    registered_at: profile.registeredAt,
+    balance_tm: profile.balanceTM,
+    balance_usdt: profile.balanceUSDT,
+    lifetime_earnings_usdt: profile.lifetimeEarningsUSDT,
+    referral_earnings_usdt: profile.referralEarningsUSDT,
+    today_bonus_usdt: profile.todayBonusUSDT,
+    deposit_status: profile.depositStatus,
+    withdraw_status: profile.withdrawStatus,
+    referral_count: profile.referralCount,
+    referral_counted: profile.referralCounted || false,
+    referred_by: profile.referredBy || null,
+    claimed_milestones: JSON.stringify(profile.claimedMilestones || []),
+    is_frozen: profile.isFrozen || false,
+    is_banned: profile.isBanned || false,
+    mandatory_completed: profile.mandatoryCompleted || false
+  };
+};
+
+export const mapTransactionFromSupabase = (row: any): Transaction => {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    type: row.type,
+    amountTM: Number(row.amount_tm || 0),
+    amountUSDT: Number(row.amount_usdt || 0),
+    description: row.description || '',
+    createdAt: row.created_at || new Date().toISOString()
+  };
+};
+
+export const mapTransactionToSupabase = (tx: Transaction) => {
+  return {
+    id: tx.id,
+    user_id: tx.userId,
+    type: tx.type,
+    amount_tm: tx.amountTM,
+    amount_usdt: tx.amountUSDT,
+    description: tx.description,
+    created_at: tx.createdAt
+  };
+};
+
+export const mapWithdrawalFromSupabase = (row: any): WithdrawalRequest => {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    userUsername: row.user_username || undefined,
+    userFirstName: row.user_first_name || '',
+    amountUSDT: Number(row.amount_usdt || 0),
+    walletAddress: row.wallet_address || '',
+    ruleId: row.rule_id || '',
+    ruleDescription: row.rule_description || '',
+    status: row.status || 'Pending',
+    createdAt: row.created_at || new Date().toISOString(),
+    processedAt: row.processed_at || undefined
+  };
+};
+
+export const mapWithdrawalToSupabase = (wd: WithdrawalRequest) => {
+  return {
+    id: wd.id,
+    user_id: wd.userId,
+    user_username: wd.userUsername || null,
+    user_first_name: wd.userFirstName,
+    amount_usdt: wd.amountUSDT,
+    wallet_address: wd.walletAddress,
+    rule_id: wd.ruleId,
+    rule_description: wd.ruleDescription,
+    status: wd.status,
+    created_at: wd.createdAt,
+    processed_at: wd.processedAt || null
+  };
+};
 
 // Initial Mock Setup
 const DEFAULT_SETTINGS: SystemSettings = {
@@ -463,168 +586,90 @@ export const processAutomaticInterestPayout = (db: AppDatabase) => {
 };
 
 export const getDB = (): AppDatabase => {
-  const data = localStorage.getItem(STORAGE_KEY);
-  if (data) {
-    try {
-      const db = JSON.parse(data);
-      // Ensure all settings fields exist on loaded DB
-      db.settings = { ...DEFAULT_SETTINGS, ...db.settings };
-      db.withdrawalRules = DEFAULT_WITHDRAWAL_RULES;
-      
-      // Ensure users exists and is not empty
-      if (!db.users || !Array.isArray(db.users) || db.users.length === 0) {
-        db.users = [...DEFAULT_USERS];
-      }
-
-      if (!db.taskSubmissions) {
-        db.taskSubmissions = [];
-      }
-      if (!db.notifications) {
-        db.notifications = [];
-      }
-      if (!db.transfers) {
-        db.transfers = [];
-      }
-
-      // Enforce the 3 mandatory channels are always present and properly configured
-      const mandatoryIds = ["mandatory_channel_1", "mandatory_channel_2", "mandatory_channel_3"];
-      const mandatoryDefs = DEFAULT_TASKS.filter(t => mandatoryIds.includes(t.id));
-      if (!db.tasks) db.tasks = [];
-      
-      let didEnforceTasks = false;
-      mandatoryDefs.forEach(def => {
-        const idx = db.tasks.findIndex((t: any) => t.id === def.id);
-        if (idx === -1) {
-          db.tasks.push(def);
-          didEnforceTasks = true;
-        } else {
-          const existing = db.tasks[idx];
-          if (
-            existing.title !== def.title ||
-            existing.rewardTM !== def.rewardTM ||
-            existing.link !== def.link ||
-            existing.channelId !== def.channelId ||
-            !existing.isMandatory ||
-            !existing.isEnabled
-          ) {
-            db.tasks[idx] = {
-              ...existing,
-              title: def.title,
-              description: def.description,
-              type: def.type,
-              rewardTM: def.rewardTM,
-              link: def.link,
-              isMandatory: true,
-              isEnabled: true,
-              requiresVerification: true,
-              channelId: def.channelId
-            };
-            didEnforceTasks = true;
-          }
-        }
-      });
-
-      if (didEnforceTasks) {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(db));
-      }
-
-      // Automatically strip out the default mock tasks/channels so the user gets a clean panel
-      const defaultMockTaskIds = ["task_1", "task_2", "task_3", "task_4", "task_5", "task_6"];
-      const defaultMockChannelIds = ["chan_1", "chan_2"];
-      let didMigrate = false;
-
-      if (db.tasks && db.tasks.some((t: any) => defaultMockTaskIds.includes(t.id))) {
-        db.tasks = db.tasks.filter((t: any) => !defaultMockTaskIds.includes(t.id));
-        didMigrate = true;
-      }
-      if (db.channels && db.channels.some((c: any) => defaultMockChannelIds.includes(c.id))) {
-        db.channels = db.channels.filter((c: any) => !defaultMockChannelIds.includes(c.id));
-        didMigrate = true;
-      }
-
-      if (didMigrate) {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(db));
-      }
-      
-      // Ensure every single user has a permanent unique numeric UID starting at 117301
-      let maxUid = 117300;
-      let needsSave = false;
-
-      if (db.settings.dailyBonusRateUSDT === 0.05) {
-        db.settings.dailyBonusRateUSDT = 0.11;
-        needsSave = true;
-      }
-      db.users.forEach((u: UserProfile) => {
-        // Migration: If user's UID is old (less than 117301), shift it to start from 117301
-        if (u.uid && u.uid < 117301) {
-          u.uid = u.uid - 100000 + 117300; // e.g. 100001 -> 117301, 100002 -> 117302, etc.
-          needsSave = true;
-        }
-        if (u.uid && u.uid > maxUid) {
-          maxUid = u.uid;
-        }
-      });
-      db.users.forEach((u: UserProfile) => {
-        if (!u.uid) {
-          maxUid += 1;
-          u.uid = maxUid;
-          needsSave = true;
-        }
-      });
-      
-      // Process automatic daily interest payout at 12:01 AM
-      processAutomaticInterestPayout(db);
-
-      if (needsSave) {
-        saveDB(db);
-      }
-      
-      return db;
-    } catch (e) {
-      console.error("Failed to parse database from localStorage, resetting", e);
-    }
+  if (cachedDb) {
+    // Ensure withdrawalRules is always present
+    cachedDb.withdrawalRules = DEFAULT_WITHDRAWAL_RULES;
+    return cachedDb;
   }
 
-  // Create initial state
   const db: AppDatabase = {
-    users: DEFAULT_USERS,
-    tasks: DEFAULT_TASKS,
-    channels: DEFAULT_CHANNELS,
-    deposits: DEFAULT_DEPOSITS,
-    withdrawals: DEFAULT_WITHDRAWALS,
+    users: [...DEFAULT_USERS],
+    tasks: [...DEFAULT_TASKS],
+    channels: [...DEFAULT_CHANNELS],
+    deposits: [...DEFAULT_DEPOSITS],
+    withdrawals: [...DEFAULT_WITHDRAWALS],
     withdrawalRules: DEFAULT_WITHDRAWAL_RULES,
-    transactions: DEFAULT_TRANSACTIONS,
+    transactions: [...DEFAULT_TRANSACTIONS],
     transfers: [],
-    tickets: DEFAULT_TICKETS,
-    settings: DEFAULT_SETTINGS,
-    completedTasks: DEFAULT_COMPLETED_TASKS,
-    claimedBonuses: DEFAULT_CLAIMED_BONUSES,
+    tickets: [...DEFAULT_TICKETS],
+    settings: { ...DEFAULT_SETTINGS },
+    completedTasks: { ...DEFAULT_COMPLETED_TASKS },
+    claimedBonuses: { ...DEFAULT_CLAIMED_BONUSES },
     taskSubmissions: [],
     notifications: [],
-    lastInterestPayout: new Date().toISOString() // Initialize to now so first payout starts from tomorrow
+    lastInterestPayout: new Date().toISOString()
   };
-
-  // Generate initial UIDs for default users
-  let startUid = 117301;
-  db.users.forEach((u: UserProfile) => {
-    u.uid = startUid;
-    startUid += 1;
-  });
-
-  saveDB(db);
+  cachedDb = db;
   return db;
 };
 
 export const saveDB = (db: AppDatabase) => {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(db));
+  cachedDb = db;
   
-  // Background server save
-  const url = currentActiveUserId ? `/api/db/save?userId=${currentActiveUserId}` : '/api/db/save';
-  fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(db)
-  }).catch(err => console.error("Error saving DB to server", err));
+  // Asynchronously save to Supabase in the background
+  (async () => {
+    try {
+      if (!currentActiveUserId) return;
+
+      const activeUser = db.users.find(u => u.id === currentActiveUserId);
+      if (activeUser) {
+        // 1. Save user profile to users table
+        await supabase.from('users').upsert(mapUserToSupabase(activeUser));
+      }
+
+      // 2. Save active user's transactions
+      const userTxs = db.transactions.filter(t => t.userId === currentActiveUserId);
+      if (userTxs.length > 0) {
+        const txPayloads = userTxs.map(mapTransactionToSupabase);
+        await supabase.from('transactions').upsert(txPayloads);
+      }
+
+      // 3. Save active user's withdrawals
+      const userWds = db.withdrawals.filter(w => w.userId === currentActiveUserId);
+      if (userWds.length > 0) {
+        const wdPayloads = userWds.map(mapWithdrawalToSupabase);
+        await supabase.from('withdrawals').upsert(wdPayloads);
+      }
+
+      // 4. Save global/shared state
+      const globalData = {
+        tasks: db.tasks,
+        channels: db.channels,
+        settings: db.settings,
+        withdrawalRules: db.withdrawalRules,
+        deposits: db.deposits,
+        tickets: db.tickets,
+        taskSubmissions: db.taskSubmissions,
+        notifications: db.notifications,
+        transfers: db.transfers,
+        giftCodes: db.giftCodes,
+        completedTasks: db.completedTasks,
+        claimedBonuses: db.claimedBonuses,
+        lastInterestPayout: db.lastInterestPayout
+      };
+      await supabase.from('app_state').upsert({ id: 'global', data: globalData });
+
+      // Keep backend API updated in the background
+      const url = `/api/db/save?userId=${currentActiveUserId}`;
+      await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(db)
+      });
+    } catch (err) {
+      console.error("[Supabase] Background save error:", err);
+    }
+  })();
 };
 
 export const verifyTaskOnServer = async (
@@ -701,21 +746,195 @@ export const completeOnboardingOnServer = async (
 export const loadDBFromServer = async (userId: string, extraData: any = {}): Promise<AppDatabase> => {
   currentActiveUserId = userId;
   try {
-    const params = new URLSearchParams({ userId, ...extraData });
-    const url = `/api/db?${params.toString()}`;
-    const response = await fetch(url);
-    if (response.ok) {
-      const db = await response.json();
-      if (!db.users || !Array.isArray(db.users) || db.users.length === 0) {
-        db.users = [...DEFAULT_USERS];
+    console.log('[Supabase Client] Loading data for user:', userId);
+
+    // 1. Fetch user profile from Supabase
+    const { data: userRow, error: userError } = await supabase
+      .from('users')
+      .select('*')
+      .eq('id', userId)
+      .single();
+
+    let userProfile: UserProfile | null = null;
+
+    if (userError || !userRow) {
+      console.log('[Supabase Client] User not found, running signup procedure...', userError);
+
+      // Determine sequential numeric UID starting at 117301
+      const { data: maxUser } = await supabase
+        .from('users')
+        .select('uid')
+        .order('uid', { ascending: false })
+        .limit(1);
+
+      let nextUid = 117301;
+      if (maxUser && maxUser.length > 0) {
+        nextUid = Number(maxUser[0].uid) + 1;
       }
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(db));
-      return db;
+
+      userProfile = {
+        id: userId,
+        uid: nextUid,
+        username: extraData.username || undefined,
+        firstName: extraData.firstName || 'New User',
+        lastName: extraData.lastName || undefined,
+        photoUrl: extraData.photoUrl || `https://api.dicebear.com/7.x/bottts/svg?seed=${extraData.firstName || userId}`,
+        languageCode: extraData.languageCode || 'en',
+        registeredAt: new Date().toISOString(),
+        balanceTM: 0,
+        balanceUSDT: 0.0,
+        lifetimeEarningsUSDT: 0.0,
+        referralEarningsUSDT: 0.0,
+        todayBonusUSDT: 0.0,
+        depositStatus: 'None',
+        withdrawStatus: 'None',
+        referralCount: 0,
+        referralCounted: false,
+        claimedMilestones: [],
+        isFrozen: false,
+        isBanned: false,
+        mandatoryCompleted: false
+      };
+
+      // Process referral parameters if any
+      let startParam = '';
+      const telegramObj = (window as any).Telegram;
+      if (telegramObj?.WebApp?.initDataUnsafe) {
+        startParam = telegramObj.WebApp.initDataUnsafe.start_param || telegramObj.WebApp.initDataUnsafe.startParam || '';
+      }
+      if (!startParam) {
+        const urlParams = new URLSearchParams(window.location.search);
+        startParam = urlParams.get('tgWebAppStartParam') || urlParams.get('start_param') || urlParams.get('ref') || '';
+      }
+
+      if (startParam) {
+        let refId = startParam;
+        if (refId.startsWith('ref_')) {
+          refId = refId.substring(4);
+        }
+        const refVal = refId.trim();
+        if (refVal && refVal !== userId) {
+          userProfile.referredBy = refVal;
+
+          // Insert referral relationship record
+          await supabase.from('referrals').insert({
+            id: `ref_${userId}_${Date.now()}`,
+            referrer_id: refVal,
+            referee_id: userId,
+            created_at: new Date().toISOString()
+          });
+
+          // Fetch referrer to reward them
+          const { data: referrerRow } = await supabase.from('users').select('*').eq('id', refVal).single();
+          if (referrerRow) {
+            const referrerProfile = mapUserFromSupabase(referrerRow);
+            if (!referrerProfile.isBanned && !referrerProfile.isFrozen) {
+              const referralRewardTM = 100;
+              const referralRewardUSDT = 0.03;
+
+              referrerProfile.balanceTM = (referrerProfile.balanceTM || 0) + referralRewardTM;
+              referrerProfile.balanceUSDT = Number(((referrerProfile.balanceUSDT || 0) + referralRewardUSDT).toFixed(4));
+              referrerProfile.referralEarningsUSDT = Number(((referrerProfile.referralEarningsUSDT || 0) + referralRewardUSDT).toFixed(4));
+              referrerProfile.referralCount = (referrerProfile.referralCount || 0) + 1;
+
+              await supabase.from('users').upsert(mapUserToSupabase(referrerProfile));
+
+              // Add Transaction record for referrer
+              const referralTx: Transaction = {
+                id: `ref_tx_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+                userId: referrerProfile.id,
+                type: 'Referral',
+                amountTM: referralRewardTM,
+                amountUSDT: referralRewardUSDT,
+                description: `Referral Reward for inviting ${userProfile.firstName} (@${userProfile.username || userProfile.id})`,
+                createdAt: new Date().toISOString()
+              };
+              await supabase.from('transactions').insert(mapTransactionToSupabase(referralTx));
+            }
+          }
+        }
+      }
+
+      // Save user profile to Supabase users table (signup insert)
+      await supabase.from('users').insert(mapUserToSupabase(userProfile));
+    } else {
+      userProfile = mapUserFromSupabase(userRow);
     }
-  } catch (e) {
-    console.error("Error loading DB from server", e);
+
+    // 2. Fetch active user's transactions
+    const { data: txRows } = await supabase
+      .from('transactions')
+      .select('*')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false });
+
+    const transactions = txRows ? txRows.map(mapTransactionFromSupabase) : [];
+
+    // 3. Fetch active user's withdrawals
+    const { data: wdRows } = await supabase
+      .from('withdrawals')
+      .select('*')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false });
+
+    const withdrawals = wdRows ? wdRows.map(mapWithdrawalFromSupabase) : [];
+
+    // 4. Fetch global state
+    const { data: appStateRow } = await supabase
+      .from('app_state')
+      .select('*')
+      .eq('id', 'global')
+      .single();
+
+    let globalState: any = {};
+    if (appStateRow && appStateRow.data) {
+      globalState = typeof appStateRow.data === 'string' ? JSON.parse(appStateRow.data) : appStateRow.data;
+    }
+
+    // Assemble completed database state
+    const db: AppDatabase = {
+      users: userProfile ? [userProfile] : [],
+      tasks: globalState.tasks || DEFAULT_TASKS,
+      channels: globalState.channels || DEFAULT_CHANNELS,
+      deposits: globalState.deposits || DEFAULT_DEPOSITS,
+      withdrawals: withdrawals.length > 0 ? withdrawals : (globalState.withdrawals || DEFAULT_WITHDRAWALS),
+      withdrawalRules: globalState.withdrawalRules || DEFAULT_WITHDRAWAL_RULES,
+      transactions: transactions.length > 0 ? transactions : (globalState.transactions || DEFAULT_TRANSACTIONS),
+      transfers: globalState.transfers || [],
+      tickets: globalState.tickets || DEFAULT_TICKETS,
+      settings: { ...DEFAULT_SETTINGS, ...(globalState.settings || {}) },
+      completedTasks: globalState.completedTasks || DEFAULT_COMPLETED_TASKS,
+      claimedBonuses: globalState.claimedBonuses || DEFAULT_CLAIMED_BONUSES,
+      taskSubmissions: globalState.taskSubmissions || [],
+      notifications: globalState.notifications || [],
+      lastInterestPayout: globalState.lastInterestPayout || new Date().toISOString(),
+      giftCodes: globalState.giftCodes || []
+    };
+
+    if (userProfile && !db.users.some(u => u.id === userProfile!.id)) {
+      db.users.push(userProfile);
+    }
+
+    cachedDb = db;
+    return db;
+  } catch (err) {
+    console.error('[Supabase Client] loadDBFromServer failed, falling back to cached state', err);
+    
+    // In case of error, trigger background fallback fetch to local server API
+    try {
+      const params = new URLSearchParams({ userId, ...extraData });
+      const response = await fetch(`/api/db?${params.toString()}`);
+      if (response.ok) {
+        const localDb = await response.json();
+        cachedDb = localDb;
+        return localDb;
+      }
+    } catch (fallbackErr) {
+      console.error('[Supabase Client] Local fallback fetch failed:', fallbackErr);
+    }
+
+    return getDB();
   }
-  return getDB();
 };
 
 export const resetDB = () => {
